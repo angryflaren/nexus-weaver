@@ -1,14 +1,12 @@
+<div align="center">
+
 # Nexus Weaver
 
-<p align="center">
-  <img src="docs/images/logo.png" alt="Nexus Weaver Title" width="400"/>
-</p>
+<b>A simple tool to combine all your project files into a single text file for easy sharing with AI models.</b>
+<br/><br/>
+<a href="https://angryflaren.github.io/nexus-weaver/"><strong>🚀 View Live Demo</strong></a>
 
-<p align="center">
-  <b>A simple tool to combine all your project files into a single text file for easy sharing with AI models.</b>
-  <br/><br/>
-  <a href="https://angryflaren.github.io/nexus-weaver/"><strong>🚀 View Live Demo</strong></a>
-</p>
+</div>
 
 <br/>
 
@@ -59,7 +57,7 @@ If you want to run the project on your own computer, follow these steps.
 
 1.  **Clone the repository**
     ```sh
-    git clone [https://github.com/angryflaren/nexus-weaver.git](https://github.com/angryflaren/nexus-weaver.git)
+    git clone https://github.com/angryflaren/nexus-weaver.git
     ```
 2.  **Go into the project folder**
     ```sh
