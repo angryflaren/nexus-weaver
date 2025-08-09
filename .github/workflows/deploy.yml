@@ -7,6 +7,7 @@ on:
   push:
     branches:
       - main
+  # Разрешает ручной запуск из интерфейса GitHub
   workflow_dispatch:
 
 # Задачи, которые будут выполняться в рамках рабочего процесса
@@ -42,7 +43,7 @@ jobs:
       # Шаг 4: Сборка проекта
       # Выполняет скрипт 'build', указанный в package.json, для сборки продакшен-версии приложения
       - name: Build project
-        [cite_start]run: npm run build # [cite: 8]
+        run: npm run build
         working-directory: ./nexus-weaver-app
 
       # Шаг 5: Развертывание на GitHub Pages
