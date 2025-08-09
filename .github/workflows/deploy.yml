@@ -1,34 +1,55 @@
-name: Deploy to GitHub Pages
+# Название рабочего процесса, которое будет отображаться в GitHub Actions
+name: Deploy Nexus Weaver to GitHub Pages
 
+# Указывает, когда запускать этот рабочий процесс
 on:
+  # Запускать при каждом пуше в ветку 'main'
   push:
     branches:
-      - main # Запускать при пуше в ветку main
+      - main
 
+# Задачи, которые будут выполняться в рамках рабочего процесса
 jobs:
+  # Единственная задача под названием 'build-and-deploy'
   build-and-deploy:
+    # Использовать последнюю версию Ubuntu в качестве операционной системы для выполнения задачи
     runs-on: ubuntu-latest
+
+    # Шаги, из которых состоит задача
     steps:
+      # Шаг 1: Клонирование репозитория
+      # Скачивает ваш код, чтобы у рабочего процесса был к нему доступ
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
+      # Шаг 2: Настройка Node.js
+      # Устанавливает указанную версию Node.js для использования в последующих шагах
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '20' # Рекомендуется использовать LTS-версию Node.js
+          node-version: '20'
+          cache: 'npm' # Включает кэширование зависимостей для ускорения будущих сборок
+          cache-dependency-path: nexus-weaver-app/package-lock.json
 
+      # Шаг 3: Установка зависимостей
+      # Выполняет команду 'npm install' для установки всех пакетов из package.json
       - name: Install dependencies
         run: npm install
-        working-directory: ./nexus-weaver-app # Указываем рабочую директорию
+        # Указывает, что команду нужно выполнить внутри папки 'nexus-weaver-app'
+        working-directory: ./nexus-weaver-app
 
+      # Шаг 4: Сборка проекта
+      # Выполняет скрипт 'build', указанный в package.json, для сборки продакшен-версии приложения
       - name: Build project
-        run: npm run build
-        working-directory: ./nexus-weaver-app # Указываем рабочую директорию
-        env:
-          VITE_BASE_URL: /nexus-weaver/ # Убедитесь, что имя репозитория верное
+        [cite_start]run: npm run build # [cite: 8]
+        working-directory: ./nexus-weaver-app
 
+      # Шаг 5: Развертывание на GitHub Pages
+      # Использует сторонний Action для автоматической публикации собранного кода в ветку gh-pages
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+        uses: peaceiris/actions-gh-pages@v4
         with:
+          # Токен для аутентификации в вашем репозитории
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./nexus-weaver-app/dist # Путь к папке со сборкой
+          # Папка, которую нужно опубликовать. Vite собирает файлы в папку 'dist'
+          publish_dir: ./nexus-weaver-app/dist
