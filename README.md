@@ -79,7 +79,7 @@ This project is made and maintained by the following person.
 
 | Role      | Name             | Contacts                                                                                                                                                                                                                                                                                                                                                                        |
 | --------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Developer | Matthew Zhuchkov | <a href="mailto:matthewzhv@outlook.com" title="Contact via Outlook"><img src="./assets/outlook-logo.png" height="28" alt="Outlook Logo" style="vertical-align:middle;"></a> &nbsp; <a href="https://t.me/alikkuc" title="Contact via Telegram"><img src="./assets/telegram-logo.png" height="28" alt="Telegram Logo" style="vertical-align:middle;"></a> |
+| Developer | Matthew Zhuchkov | <a href="mailto:matthewzhv@outlook.com" title="Contact via Outlook"><img src="https://upload.wikimedia.org/wikipedia/commons/d/df/Microsoft_Office_Outlook_%282018%E2%80%93present%29.svg" height="28" alt="Outlook Logo" style="vertical-align:middle;"></a>   <a href="https://t.me/alikkuc" title="Contact via Telegram"><img src="https://cdn.simpleicons.org/telegram/26A5E4" height="28" alt="Telegram Logo" style="vertical-align:middle;"></a> |
 
 
 ## 📜 License
