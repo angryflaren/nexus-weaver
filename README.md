@@ -79,7 +79,7 @@ This project is made and maintained by the following person.
 
 | Role      | Name             | Contacts                                                                                                                                                                                                                                                                                                                                                                        |
 | --------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Developer | Matthew Zhuchkov | <a href="https://github.com/angryflaren" title="GitHub Profile"><img src="https://cdn.simpleicons.org/github/000000" height="28" alt="GitHub Logo" style="vertical-align:middle;"/></a> <a href="mailto:matthewzhv@outlook.com" title="Send an Email"><img src="https://cdn.simpleicons.org/microsoftoutlook/000000" height="28" alt="Outlook Logo" style="vertical-align:middle;"/></a> |
+| Developer | Matthew Zhuchkov | <a href="mailto:matthewzhv@outlook.com" title="Contact via Outlook"><img src="./assets/outlook-logo.png" height="28" alt="Outlook Logo" style="vertical-align:middle;"></a> &nbsp; <a href="https://t.me/alikkuc" title="Contact via Telegram"><img src="./assets/telegram-logo.png" height="28" alt="Telegram Logo" style="vertical-align:middle;"></a> |
 
 
 ## 📜 License
