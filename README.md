@@ -77,9 +77,10 @@ If you want to run the project on your own computer, follow these steps.
 
 This project is made and maintained by the following person.
 
-| Role              | Name    | Contacts                                                                                                                                                                                                                                                                  |
-| ----------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Creator/Developer | Matthew | <a href="https://github.com/angryflaren" title="GitHub Profile"><img src="https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/github.svg" height="28" alt="github logo"/></a> <a href="mailto:matthewzhv@outlook.com" title="Send an Email"><img src="https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/microsoftoutlook.svg" height="28" alt="email icon"/></a> |
+| Role              | Name    | Contacts                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Developer | Matthew Zhuchkov | <a href="https://github.com/angryflaren" title="GitHub Profile"><img src="https://cdn.simpleicons.org/github/white" height="28" alt="GitHub Logo" style="vertical-align:middle;"/></a> <a href="mailto:matthewzhv@outlook.com" title="Send an Email"><img src="https://cdn.simpleicons.org/microsoftoutlook/white" height="28" alt="Outlook Logo" style="vertical-align:middle;"/></a> |
+
 
 ## 📜 License
 
