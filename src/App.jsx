@@ -1,7 +1,9 @@
-import React, { useState, useRef, useEffect, useMemo, memo, useCallback } from "react";
+import React, { useState, useRef, useEffect, useMemo, memo, useCallback, useLayoutEffect } from "react";
 import { createPortal } from 'react-dom';
 import defaultIgnoredFiles from './ignoreList.js';
 import ignoredFolderNames from './ignoreFolders.js';
+import defaultUncheckedFolders from './defaultUncheckedFolders.js';
+import defaultUncheckedSubstrings from './defaultUncheckedSubstrings.js';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 
@@ -12,6 +14,9 @@ const icons = {
   folder: <svg className="w-5 h-5" fill="none" strokeWidth={1.5} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>,
   folderOpen: <svg className="w-5 h-5" fill="none" strokeWidth={1.5} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.75h16.5m-16.5 0A2.25 2.25 0 015.25 7.5h13.5a2.25 2.25 0 012.25 2.25m-16.5 0v6.75a2.25 2.25 0 002.25 2.25h13.5a2.25 2.25 0 002.25-2.25V9.75" /></svg>,
   info: <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg>,
+  copy: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>,
+  search: <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd" /></svg>,
+  check: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>,
 };
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico', 'tif', 'tiff', 'jfif', 'jp2', 'jpx', 'j2k', 'jxr', 'jls', 'wdp', 'hdp', 'xbm', 'xpm', 'avif', 'heic', 'heif', 'heics', 'jxl', 'dng', 'cr2', 'cr3', 'crw', 'nef', 'nrw', 'arw', 'srf', 'sr2', 'orf', 'raf', 'pef', 'rw2', 'raw', 'rwl', 'srw', '3fr', 'kdc', 'mos', 'mrw', 'erf', 'bay', 'k25', 'dcs', 'ptx', 'ai', 'eps', 'cdr', 'wmf', 'emf', 'fig', 'dxf', 'cgm', 'sk', 'skp', 'fits', 'dcm', 'dicom', 'tga', 'pcx', 'ppm', 'pgm', 'pbm', 'pnm', 'psd', 'psb', 'xcf', 'dpx', 'cin', 'exr', 'fax', 'icns', 'pict', 'pct', 'apng', 'mng', 'fli', 'flc']);
 const hardIgnoredExtensions = new Set(['exe', 'msi', 'sys', 'bat', 'cmd', 'sh', 'com', 'pif', 'scr', 'app', 'pkg', 'dmg', 'cpl', 'gadget', 'jar', 'action', 'wsf', 'vbs', 'dll', 'so', 'dylib', 'o', 'obj', 'a', 'lib', 'sys', 'drv', 'zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'tgz', 'iso', 'img', 'cab', 'arj', 'lha', 'ace', 'lbr', 'lqr', 'war', 'vhd', 'vmdk', 'vdi', 'vbox', 'vmx', 'pvs', 'hdd', 'nrg', 'ds_store', 'thumbs.db', 'desktop.ini', 'ntuser.dat', 'icon', 'ini', 'inf', 'reg', 'plist', 'sqlite', 'sqlite3', 'db', 'mdb', 'accdb', 'sdf', 'dbf', 'dat', 'frm', 'myd', 'myi', 'nsf', 'mp4', 'm4v', 'mov', 'avi', 'mkv', 'webm', 'wmv', 'flv', 'mpg', 'mpeg', 'asf', 'vob', '3gp', 'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'aiff', 'wma', 'mid', 'midi', 'm3u', 'pls', 'asx', 'bup', 'ifo', 'ttf', 'otf', 'woff', 'woff2', 'eot', 'tmp', 'temp', 'bak', 'old', '$$$', '.~', 'part', 'parts', 'crdownload', 'download', 'swp', 'swo', 'bkp', 'bk!', 'torrent', 'pak', 'wad', 'vpk', 'sav', 'bsp', 'nes', 'sfc', 'gb', 'gba', 'nds', 'rom', 'pdb', 'ilk', 'map', 'ncb', 'suo', 'pch', 'idb', 'gch', 'objdump', 'key', 'pem', 'cer', 'crt', 'pfx', 'p12', 'p7s', 'p7b', 'eml', 'msg', 'mbox', 'shp', 'shx', 'bin', 'cue', 'nfo', 'lock', 'pid', 'chk', 'cda']);
@@ -131,8 +136,55 @@ const getDescendantFilePaths = (item) => {
 };
 
 const Tooltip = ({ content, x, y }) => {
+  const ref = useRef(null);
+  const [adjustedX, setAdjustedX] = useState(x);
+  const [opacity, setOpacity] = useState(0); // Начинаем невидимым
+
+  useLayoutEffect(() => {
+    if (ref.current) {
+      const tooltipWidth = ref.current.offsetWidth;
+      const padding = 8; // Небольшой отступ от краев экрана
+
+      // Идеальная центральная позиция
+      const idealX = x; 
+      
+      // Вычисляем реальные левый и правый края подсказки
+      const proposedLeft = idealX - (tooltipWidth / 2);
+      const proposedRight = idealX + (tooltipWidth / 2);
+
+      let newX = idealX; // По умолчанию используем идеальную позицию
+
+      // 1. Проверяем левый край
+      if (proposedLeft < padding) {
+        // Подсказка вылезает слева.
+        // "Прижимаем" ее к левому краю, сдвигая центр (X) вправо.
+        // newX = (желаемый левый край) + (половина ширины)
+        newX = padding + (tooltipWidth / 2);
+      } 
+      // 2. Проверяем правый край
+      else if (proposedRight > (window.innerWidth - padding)) {
+        // Подсказка вылезает справа.
+        // "Прижимаем" ее к правому краю, сдвигая центр (X) влево.
+        // newX = (желаемый правый край) - (половина ширины)
+        newX = (window.innerWidth - padding) - (tooltipWidth / 2);
+      }
+      
+      setAdjustedX(newX);
+      setOpacity(1); // Делаем видимым в правильной позиции
+    }
+  }, [content, x, y]); // Пересчитываем, если меняется контент или позиция
+
   return createPortal(
-    <div className="fixed bg-gray-800 text-white text-xs rounded py-1 px-2 z-50 pointer-events-none transform -translate-x-1/2" style={{ top: y, left: x }}>
+    <div 
+      ref={ref}
+      className="fixed bg-gray-800 text-white text-xs rounded py-1 px-2 z-50 pointer-events-none transform -translate-x-1/2" 
+      style={{ 
+        top: y, 
+        left: adjustedX, 
+        opacity: opacity, 
+        transition: 'opacity 0.1s' // Плавное появление
+      }}
+    >
       {content}
     </div>,
     document.getElementById('tooltip-root')
@@ -157,58 +209,75 @@ const ResultRow = memo(({ index, style, data }) => (
 ));
 
 const FileTreeRow = memo(({ index, style, data }) => {
-    const { items, getSelectionState, handleToggleSelection, handleToggleFolder, openFolders, showTooltip, hideTooltip } = data;
+    const { items, getSelectionState, handleToggleSelection, handleToggleFolder, openFolders, showTooltip, hideTooltip, isSearching } = data;
     const item = items[index];
     if (!item) return null;
 
     const isFolder = item.type === 'folder';
     const selectionState = getSelectionState(item);
     
-    const extension = item.type === 'file' ? item.path.split('.').pop().toLowerCase() : '';
-    const isImage = imageExtensions.has(extension);
-    const isDocument = documentExtensions.has(extension);
 
     return (
       <div style={style} className="flex items-center text-sm hover:bg-gray-500/10 pr-2">
+
         <span style={{ width: `${item.depth * 24}px` }} className="flex-shrink-0" />
-        <div className="flex items-center space-x-2 truncate py-1">
+        
+        <div className="flex flex-1 min-w-0 items-center space-x-2 py-1">
           <input 
             type="checkbox" 
             className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 flex-shrink-0"
             checked={selectionState === 'checked'}
-            ref={el => el && (el.indeterminate = selectionState === 'indeterminate')}
+            
+        ref={el => el && (el.indeterminate = selectionState === 'indeterminate')}
             onChange={() => handleToggleSelection(item)}
             disabled={item.isIgnored}
           />
+          
           <div 
-            className={`file-icon ${isFolder ? 'cursor-pointer' : ''} ${item.isIgnored ? 'text-gray-500' : 'text-gray-700 dark:text-gray-300'}`} 
-            onClick={() => isFolder && handleToggleFolder(item.path)}
+            className={`file-icon ${isFolder && !isSearching ? 'cursor-pointer' : ''} ${item.isIgnored ? 'text-gray-500' : 'text-gray-700 dark:text-gray-300'}`}
+            onClick={() => isFolder && !isSearching && handleToggleFolder(item.path)}
           >
-            {isFolder ? (openFolders.has(item.path) ? icons.folderOpen : icons.folder) : icons.file}
+            {isFolder ?
+(openFolders.has(item.path) && !isSearching ? icons.folderOpen : icons.folder) : icons.file}
           </div>
+          
           <span 
-            className={`file-name truncate ${isFolder ? 'cursor-pointer' : ''} ${item.isIgnored ? 'text-gray-500' : ''}`} 
-            onClick={() => isFolder && handleToggleFolder(item.path)} 
+            className={`file-name truncate min-w-0 ${isFolder && !isSearching ? 'cursor-pointer' : ''} ${item.isIgnored ? 'text-gray-500' : ''}`}
+            onClick={() => isFolder && !isSearching && handleToggleFolder(item.path)}
             title={item.name}
           >
             {item.name}
           </span>
-          <div className="flex items-center space-x-1">
-            {item.isIgnored && (
-              <div onMouseEnter={(e) => showTooltip("This file is ignored by default as it appears to be a system, configuration, or generated file, not primary source code.", e)} onMouseLeave={hideTooltip}>
-                <div className="text-gray-400">{icons.info}</div>
+          
+          <div className="flex items-center space-x-1 ml-auto flex-shrink-0">
+			{/* 1. Hard Ignore (Серый) */}
+            {item.isIgnored ? (
+              <div onMouseEnter={(e) => showTooltip("This file is ignored. It appears to be a system, dependency, or binary file. It cannot be selected.", e)} onMouseLeave={hideTooltip}>
+                <div className="text-gray-500">{icons.info}</div>
               </div>
-            )}
-            {isImage && !item.isIgnored && (
+            
+            // --- Сюда попадают только НЕ игнорируемые ---
+
+            /* 2. Image (Синий) - для Файлов и Папок */
+            ) : item.specialType === 'image' ? (
               <div onMouseEnter={(e) => showTooltip("Encoded as Base64. Warning: increases file size and can be slow for AI.", e)} onMouseLeave={hideTooltip}>
                 <div className="text-blue-400">{icons.info}</div>
               </div>
-            )}
-            {isDocument && !item.isIgnored && (
+            
+            /* 3. Document (Зеленый) - для Файлов и Папок */
+            ) : item.specialType === 'document' ? (
               <div onMouseEnter={(e) => showTooltip("Encoded as Base64. Warning: increases file size and can be slow for AI.", e)} onMouseLeave={hideTooltip}>
                 <div className="text-green-500">{icons.info}</div>
               </div>
-            )}
+
+            /* 4. Soft Ignore (Желтый) - для Файлов и Папок */
+            ) : item.specialType === 'soft_ignore' ? (
+              <div onMouseEnter={(e) => showTooltip("This is unchecked by default (e.g., tests, docs). You can still select it.", e)} onMouseLeave={hideTooltip}>
+                <div className="text-yellow-500">{icons.info}</div>
+              </div>
+            
+            ) : null /* 5. Обычный файл/папка - нет иконки */}
+
           </div>
         </div>
       </div>
@@ -231,6 +300,11 @@ const App = () => {
   const [tooltip, setTooltip] = useState({ visible: false, content: '', x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [allFilesMap, setAllFilesMap] = useState(new Map());
+  const [rawFiles, setRawFiles] = useState([]);
   const openAboutModal = useCallback(() => setIsAboutModalOpen(true), []);
   const closeAboutModal = useCallback(() => setIsAboutModalOpen(false), []);
   
@@ -238,7 +312,7 @@ const App = () => {
   const fileInputRef = useRef(null);
   
   const isFileIgnored = useCallback((item) => {
-    if (defaultIgnoredFiles.has(item.name)) return true;
+	if (defaultIgnoredFiles.has(item.name)) return true;
     const extension = `.${item.name.split('.').pop()}`;
     if (defaultIgnoredFiles.has(extension)) return true;
 
@@ -252,10 +326,10 @@ const App = () => {
     return false;
   }, []);
 
-  const processFiles = useCallback((files) => {
+  const buildTreeFromFiles = useCallback((files) => {
     if (!files || files.length === 0) {
       console.log("No processable files found.");
-      return;
+      return null;
     }
 
     let rootName = "Selected Items";
@@ -269,50 +343,166 @@ const App = () => {
     
     const initialSelection = new Set();
     const initialOpenFolders = new Set();
+    const uncheckedSubstringsArray = Array.from(defaultUncheckedSubstrings);
 
-    function traverse(items) {
+    function traverseAndAnalyze(items, isAncestorSoftIgnored = false) {
+      let hasAnySelectable = false;
+      const foundTypes = new Set();
+
       for (const item of items) {
         item.isIgnored = isFileIgnored(item);
+        item.specialType = null;
         
-        if (item.type === 'file' && !item.isIgnored) {
+        if (item.type === 'file') {
+          if (item.isIgnored) continue;
+          
+          hasAnySelectable = true;
+
           const fileExtension = item.path.split('.').pop().toLowerCase();
-          if (!imageExtensions.has(fileExtension) && !documentExtensions.has(fileExtension)) {
-            initialSelection.add(item.path);
+          const isImage = imageExtensions.has(fileExtension);
+          const isDocument = documentExtensions.has(fileExtension);
+
+          if (isImage) {
+            item.specialType = 'image';
+            foundTypes.add('image');
+          } else if (isDocument) {
+            item.specialType = 'document';
+            foundTypes.add('document');
+          } else {
+            const pathParts = item.path.split('/');
+            const fileName = pathParts[pathParts.length - 1];
+            
+            const hasUncheckedFolder = pathParts.some(part => defaultUncheckedFolders.has(part));
+            const fileNameHasSubstring = uncheckedSubstringsArray.some(substring => fileName.toLowerCase().includes(substring));
+
+            if (hasUncheckedFolder || fileNameHasSubstring) {
+              item.specialType = 'soft_ignore';
+              foundTypes.add('soft_ignore');
+            } else if (isAncestorSoftIgnored) {
+              foundTypes.add('soft_ignore');
+            } else {
+              foundTypes.add('code');
+              initialSelection.add(item.path);
+            }
           }
+
         } else if (item.type === 'folder') {
-          const descendantPaths = getDescendantFilePaths(item);
-          const hasSelectableFiles = descendantPaths.some(path => !isFileIgnored({ type: 'file', path, name: path.split('/').pop() }));
-          if (hasSelectableFiles) {
-            initialOpenFolders.add(item.path);
+          if (item.isIgnored) continue;
+          
+          let newAncestorFlag = isAncestorSoftIgnored;
+          
+          const folderNameHasSubstring = uncheckedSubstringsArray.some(substring => item.name.toLowerCase().includes(substring));
+          const folderNameIsInList = defaultUncheckedFolders.has(item.name);
+
+          if (folderNameHasSubstring || folderNameIsInList) {
+            newAncestorFlag = true;
+            item.specialType = 'soft_ignore';
+            foundTypes.add('soft_ignore');
           }
-          if (item.children) {
-            traverse(item.children);
+
+          if (item.children && item.children.length > 0) {
+            const childStatus = traverseAndAnalyze(item.children, newAncestorFlag);
+
+            if (childStatus.hasSelectable) {
+              hasAnySelectable = true;
+              initialOpenFolders.add(item.path);
+              
+              childStatus.foundTypes.forEach(type => foundTypes.add(type));
+              
+              if (!item.specialType) {
+                const nonSoftTypes = new Set(childStatus.foundTypes);
+                nonSoftTypes.delete('soft_ignore');
+                
+                if (nonSoftTypes.size === 1 && !nonSoftTypes.has('code')) {
+                  item.specialType = nonSoftTypes.values().next().value;
+                }
+              }
+            }
           }
         }
-      }
-    }
-    traverse(newFileTree);
+      } // end for
 
-    setFolderName(rootName);
-    setFileTree(newFileTree);
-    setSelectedPaths(initialSelection);
-    setOpenFolders(initialOpenFolders);
-    setCurrentScreen("processing");
+      return { hasSelectable: hasAnySelectable, foundTypes };
+    }
+
+    traverseAndAnalyze(newFileTree);
+    
+    return { rootName, newFileTree, initialSelection, initialOpenFolders };
+    
   }, [isFileIgnored]);
+  
+  const handleFilesAdded = useCallback(async (newFilesArray) => {
+    if (!newFilesArray || newFilesArray.length === 0) {
+		setIsScanning(false);
+		return;
+	}
+	
+	await new Promise(resolve => setTimeout(resolve, 0));
 
-  const handleDrop = useCallback(async (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.items) {
-        const files = await getDroppedFiles(e.dataTransfer.items);
-        processFiles(files);
+    const combinedFiles = [...rawFiles, ...newFilesArray];
+
+    const uniqueFilesMap = new Map();
+    for (const file of combinedFiles) {
+        const path = file.webkitRelativePath || file.name;
+		uniqueFilesMap.set(path, file);
     }
-  }, [processFiles]);
+    const allUniqueFiles = Array.from(uniqueFilesMap.values());
+	
+	setAllFilesMap(uniqueFilesMap);
+	
+	const oldFilePaths = new Set(rawFiles.map(f => f.webkitRelativePath || f.name));
+	
+    setRawFiles(allUniqueFiles);
 
-  const handleInputChange = useCallback((e) => {
-    const files = Array.from(e.target.files);
-    processFiles(files);
-  }, [processFiles]);
+    const buildResult = buildTreeFromFiles(allUniqueFiles);
+    if (!buildResult) return;
+    
+    const { rootName, newFileTree, initialSelection, initialOpenFolders } = buildResult;
+
+	setFileTree(newFileTree);
+	setOpenFolders(prevOpen => new Set([...prevOpen, ...initialOpenFolders]));
+	
+    if (currentScreen === "upload") {
+        setFolderName(rootName);
+        setCurrentScreen("processing");
+		setSelectedPaths(initialSelection);
+    } else {
+		const newSelections = new Set();
+		for (const path of initialSelection) {
+			if (!oldFilePaths.has(path)) {
+				newSelections.add(path);
+			}
+		}
+		setSelectedPaths(prevSelected => new Set([...prevSelected, ...newSelections]));
+	}
+
+    setOpenFolders(prevOpen => new Set([...prevOpen, ...initialOpenFolders]));
+	setIsScanning(false);
+
+  }, [rawFiles, buildTreeFromFiles, isFileIgnored, currentScreen]);
+
+    const handleDrop = useCallback(async (e) => {
+		e.preventDefault();
+		setIsDragging(false);
+		setIsScanning(true);
+		if (e.dataTransfer.items) {
+			const files = await getDroppedFiles(e.dataTransfer.items);
+			await handleFilesAdded(files);
+		} else {
+			setIsScanning(false);
+		}
+	  }, [handleFilesAdded]);
+
+    const handleInputChange = useCallback((e) => {
+		const fileList = e.target.files;
+		if (e.target) e.target.value = null;
+		setIsScanning(true);
+		setTimeout(async () => {
+			const files = Array.from(fileList);
+			await handleFilesAdded(files);
+		}, 0);
+    
+	}, [handleFilesAdded]);
 
   const handleToggleFolder = useCallback((folderPath) => {
     setOpenFolders(prev => {
@@ -416,7 +606,13 @@ const App = () => {
   }, [fileTree, selectedPaths]);
   
   const copyToClipboard = useCallback(() => {
-    if(resultLines.length > 0) navigator.clipboard.writeText(resultLines.join('\n'));
+    if (resultLines.length === 0 || isCopied) return;
+	navigator.clipboard.writeText(resultLines.join('\n')).then(() => {
+		setIsCopied(true);
+		setTimeout(() => setIsCopied(false), 2000);
+	}).catch(err => {
+		console.error('Failed to copy text: ', err);
+	});
   }, [resultLines]);
 
   const downloadDocument = useCallback(() => {
@@ -438,20 +634,38 @@ const App = () => {
   
   const flattenedTree = useMemo(() => {
     const flat = [];
-    function flatten(items, depth) {
-      items.sort((a,b) => {
-        if (a.type === b.type) return a.name.localeCompare(b.name);
-        return a.type === 'folder' ? -1 : 1;
-      }).forEach(item => {
-        flat.push({ ...item, depth });
-        if (item.type === 'folder' && openFolders.has(item.path)) {
-          flatten(item.children || [], depth + 1);
-        }
-      });
+
+    if (searchQuery) {
+      const allItems = [];
+      const flattenAll = (items) => {
+        items.forEach(item => {
+          allItems.push(item);
+          if (item.children) flattenAll(item.children);
+        });
+      };
+      flattenAll(fileTree);
+
+      const lowerQuery = searchQuery.toLowerCase();
+      return allItems
+        .filter(item => item.name.toLowerCase().includes(lowerQuery))
+        .map(item => ({ ...item, depth: 0 }));
+
+    } else {
+      function flatten(items, depth) {
+        items.sort((a, b) => {
+          if (a.type === b.type) return a.name.localeCompare(b.name);
+          return a.type === 'folder' ? -1 : 1;
+        }).forEach(item => {
+          flat.push({ ...item, depth });
+          if (item.type === 'folder' && openFolders.has(item.path)) {
+            flatten(item.children || [], depth + 1);
+          }
+        });
+      }
+      flatten(fileTree, 0);
+      return flat;
     }
-    flatten(fileTree, 0);
-    return flat;
-  }, [fileTree, openFolders]);
+  }, [fileTree, openFolders, searchQuery]);
 
   const fileTreeData = useMemo(() => ({
     items: flattenedTree,
@@ -460,10 +674,52 @@ const App = () => {
     handleToggleFolder,
     openFolders,
     showTooltip,
-    hideTooltip
-  }), [flattenedTree, getSelectionState, handleToggleSelection, handleToggleFolder, openFolders, showTooltip, hideTooltip]);
+    hideTooltip,
+	isSearching: !!searchQuery
+  }), [flattenedTree, getSelectionState, handleToggleSelection, handleToggleFolder, openFolders, showTooltip, hideTooltip, searchQuery]);
 
-  return (
+	const processingCharCount = useMemo(() => {
+		let totalSize = 0;
+		for (const path of selectedPaths) {
+			const file = allFilesMap.get(path);
+			if (file) {
+				totalSize += file.size;
+			}
+		}
+		return totalSize;
+	}, [selectedPaths, allFilesMap]);
+	
+	const resultCharCount = useMemo(() => {
+		if (resultLines.length === 0) return 0;
+		return resultLines.join('\n').length;
+	}, [resultLines]);
+	
+	const TokenCounter = ({ charCount }) => {
+		const tokenCount = Math.round(charCount / 4);
+		const isDanger = tokenCount > 250000;
+		const tooltipText = "Token count is very high. Models may struggle to read this.";
+		return (
+		  <div className={`flex items-center space-x-2 text-sm ${isDanger ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'}`}>
+			<span className={isDanger ? 'font-bold' : ''}>
+			  {tokenCount.toLocaleString('en-US')} tokens
+			</span>
+			<span className="text-xs">
+			  (~{charCount.toLocaleString('en-US')} chars)
+			</span>
+			{isDanger && (
+			  <div 
+				onMouseEnter={(e) => showTooltip(tooltipText, e)} 
+				onMouseLeave={hideTooltip}
+				className="cursor-help"
+			  >
+				{icons.info}
+			  </div>
+			)}
+		  </div>
+		);
+	};
+	
+	return (
     <div className={`min-h-screen transition-colors duration-300 ${darkMode ? 'bg-gray-900 text-gray-100' : 'bg-gray-50 text-gray-800'}`}>
       {isAboutModalOpen && <AboutModal onClose={closeAboutModal} />}
       {tooltip.visible && <Tooltip content={tooltip.content} x={tooltip.x} y={tooltip.y} />}
@@ -482,49 +738,95 @@ const App = () => {
         </div>
       </header>
 
-      <main className="container mx-auto px-6 py-8 max-w-7xl">
+		<input type="file" ref={folderInputRef} onChange={handleInputChange} multiple webkitdirectory="" directory="" className="hidden"/>
+		<input type="file" ref={fileInputRef} onChange={handleInputChange} multiple className="hidden"/>
+		<main className="container mx-auto px-6 py-8 max-w-7xl">
         {currentScreen === "upload" && (
           <div className="flex flex-col items-center justify-center min-h-[75vh]">
-            <div
-              className={`w-full max-w-3xl border-2 border-dashed rounded-2xl p-16 text-center transition-all duration-300 ${isDragging ? 'border-blue-500 bg-blue-500/10' : (darkMode ? 'border-gray-600' : 'border-gray-300')}`}
-              onDragEnter={() => setIsDragging(true)}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={handleDrop}
-              onDragOver={(e) => e.preventDefault()}
-            >
-              <svg className="w-16 h-16 mx-auto mb-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-              <h2 className={`text-2xl font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Drop your project folder or files here</h2>
-              <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} mt-4`}>or</p>
-              <div className="mt-6 flex justify-center items-center space-x-4">
-                <button
-                  onClick={() => folderInputRef.current?.click()}
-                  className={`font-semibold py-2 px-4 rounded-lg transition-colors ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-gray-200 hover:bg-gray-300 text-gray-800'}`}
-                >
-                  Select Folder
-                </button>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`font-semibold py-2 px-4 rounded-lg transition-colors ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-gray-200 hover:bg-gray-300 text-gray-800'}`}
-                >
-                  Select Files
-                </button>
+            
+            {isScanning ? (
+              <div className="flex flex-col items-center justify-center p-16 text-center text-gray-500 dark:text-gray-400">
+                <div className="animate-spin mb-4 text-blue-500">
+                  <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2.75C6.89137 2.75 2.75 6.89137 2.75 12C2.75 17.1086 6.89137 21.25 12 21.25C17.1086 21.25 21.25 17.1086 21.25 12C21.25 10.1611 20.768 8.40699 19.9288 6.85871" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+                <h2 className={`text-2xl font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                  Scanning files...
+                </h2>
+                <p>Please wait, this may take a moment for large folders.</p>
               </div>
-              <input type="file" ref={folderInputRef} onChange={handleInputChange} multiple webkitdirectory="" directory="" className="hidden"/>
-              <input type="file" ref={fileInputRef} onChange={handleInputChange} multiple className="hidden"/>
-            </div>
-          </div>
+            ) : (
+              <div
+                className={`w-full max-w-3xl border-2 border-dashed rounded-2xl p-16 text-center transition-all duration-300 ${isDragging ? 'border-blue-500 bg-blue-500/10' : (darkMode ? 'border-gray-600' : 'border-gray-300')}`}
+                onDragEnter={() => setIsDragging(true)}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={handleDrop}
+                onDragOver={(e) => e.preventDefault()}
+              >
+                <svg className="w-16 h-16 mx-auto mb-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                </svg>
+                <h2 className={`text-2xl font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Drop your project folder or files here</h2>
+                <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} mt-4`}>or</p>
+                <div className="mt-6 flex justify-center items-center space-x-4">
+                  <button
+                    onClick={() => folderInputRef.current?.click()}
+                    className={`font-semibold py-2 px-4 rounded-lg transition-colors ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-gray-200 hover:bg-gray-300 text-gray-800'}`}
+                  >
+                    Select Folder
+                  </button>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`font-semibold py-2 px-4 rounded-lg transition-colors ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-gray-200 hover:bg-gray-300 text-gray-800'}`}
+                  >
+                    Select Files
+                  </button>
+                </div>
+              </div>
+            )}
+			
+          </div> 
         )}
 
         {currentScreen === "processing" && (
           <div className={`grid grid-cols-1 lg:grid-cols-5 gap-8 h-[75vh]`}>
             <div className={`lg:col-span-2 rounded-2xl p-4 flex flex-col ${darkMode ? 'bg-gray-800/50' : 'bg-white/80'}`}>
+          
               <div className={`flex items-center justify-between mb-2 pb-2 border-b flex-shrink-0 ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
                 <h2 className={`font-semibold truncate ${darkMode ? 'text-white' : 'text-gray-900'}`} title={folderName}>Project: {folderName}</h2>
-                <div className="flex space-x-3 flex-shrink-0">
+                
+                <div className="flex space-x-2 flex-shrink-0 items-center">
+                  <button
+                    onClick={() => folderInputRef.current?.click()}
+                    className={`text-xs font-medium px-2 py-1 rounded ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-200 hover:bg-gray-300 text-gray-700'}`}
+                  >
+                    + Add Folder
+                  </button>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`text-xs font-medium px-2 py-1 rounded ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-200 hover:bg-gray-300 text-gray-700'}`}
+                  >
+                    + Add Files
+                  </button>
                   <button onClick={handleSelectAll} className={`text-xs font-medium ${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-800'}`}>Select All</button>
                   <button onClick={handleDeselectAll} className={`text-xs font-medium ${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-800'}`}>Deselect All</button>
                 </div>
               </div>
+
+              <div className="relative mb-2 flex-shrink-0">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                  {icons.search}
+                </div>
+                <input
+                  type="text"
+                  placeholder="Filter files..."
+                  className={`w-full py-2 pl-9 pr-4 rounded-lg text-sm ${darkMode ? 'bg-gray-700 text-gray-100 placeholder-gray-400' : 'bg-gray-100 text-gray-800 placeholder-gray-500'} border-none focus:ring-2 focus:ring-blue-500`}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+
               <div className="flex-grow min-h-0 w-full">
                 <AutoSizer>
                   {({ height, width }) => (
@@ -541,11 +843,12 @@ const App = () => {
                 </AutoSizer>
               </div>
             </div>
-            
+
             <div className={`lg:col-span-3 rounded-2xl p-6 flex flex-col justify-center items-center ${darkMode ? 'bg-gray-800/50' : 'bg-white/80'}`}>
               <div className="text-center w-full max-w-sm">
                 <h2 className={`text-2xl font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Ready to Weave</h2>
                 <p className="mb-6 text-gray-500">{selectedPaths.size} files selected</p>
+                <div className="mb-6 -mt-2 flex justify-center"><TokenCounter charCount={processingCharCount} /></div>
                 {isProcessing ? (
                   <div className="space-y-3">
                     <div className="flex justify-between text-sm"><span className={`truncate pr-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`} title={currentProcessingFile}>Processing: {currentProcessingFile}</span><span className={darkMode ? 'text-gray-400' : 'text-gray-500'}>{Math.round(processingProgress)}%</span></div>
@@ -560,30 +863,34 @@ const App = () => {
         )}
         
         {currentScreen === "result" && (
-          <div className="h-[75vh] flex flex-col rounded-2xl overflow-hidden">
-            <div className={`p-3 border-b flex justify-end space-x-2 flex-shrink-0 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-gray-100 border-gray-200'}`}>
-                <button onClick={() => setCurrentScreen('processing')} className={`px-3 py-1 text-sm font-medium rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-200 hover:bg-gray-300'}`}>Back to Files</button>
-                <button onClick={copyToClipboard} className={`p-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-white hover:bg-gray-100 text-gray-700'} shadow`} title="Copy to clipboard"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg></button>
-                <button onClick={downloadDocument} className={`p-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-white hover:bg-gray-100 text-gray-700'} shadow`} title="Download document"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></button>
-            </div>
-            <div className={`flex-grow min-h-0 w-full p-2 ${darkMode ? 'bg-gray-900' : 'bg-white'}`}>
-                <AutoSizer>
-                  {({ height, width }) => (
-                    <List
-                      height={height}
-                      itemCount={resultLines.length}
-                      itemSize={24}
-                      width={width}
-                      itemData={resultLines}
-                    >
-                      {ResultRow}
-                    </List>
-                  )}
-                </AutoSizer>
-            </div>
-          </div>
-        )}
-      </main>
+		<div className="h-[75vh] flex flex-col rounded-2xl overflow-hidden">
+		  <div className={`p-3 border-b flex justify-between items-center space-x-2 flex-shrink-0 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-gray-100 border-gray-200'}`}>
+			<TokenCounter charCount={resultCharCount} />
+			<div className="flex space-x-2">
+			  <button onClick={() => setCurrentScreen('processing')} className={`px-3 py-1 text-sm font-medium rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-200 hover:bg-gray-300'}`}>Back to Files</button>
+			  <button onClick={copyToClipboard} disabled={isCopied} className={`p-2 rounded-lg shadow transition-all duration-200 ${isCopied ? (darkMode ? 'bg-green-800 text-green-300' : 'bg-green-100 text-green-600') : (darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-white hover:bg-gray-100 text-gray-700')}`} title={isCopied ? "Copied!" : "Copy to clipboard"}>{isCopied ? icons.check : icons.copy}</button>
+			  <button onClick={downloadDocument} className={`p-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-white hover:bg-gray-100 text-gray-700'} shadow`} title="Download document"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></button>
+			</div>
+		  </div>
+
+		  <div className={`flex-grow min-h-0 w-full p-2 ${darkMode ? 'bg-gray-900' : 'bg-white'}`}>
+			<AutoSizer>
+			  {({ height, width }) => (
+				<List
+				  height={height}
+				  itemCount={resultLines.length}
+				  itemSize={24}
+				  width={width}
+				  itemData={resultLines}
+				>
+				  {ResultRow}
+				</List>
+			  )}
+			</AutoSizer>
+		  </div>
+		</div>
+	  )}
+	</main>
 
       <footer className={`px-6 py-4 text-center text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
         Built with ❤️ by{' '}

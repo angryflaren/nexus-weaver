@@ -1,4 +1,3 @@
-// We export the Set directly for more efficient lookups.
 const defaultIgnoredFolders = new Set([
   // --- Системы контроля версий ---
   '.git', '.svn', '.hg', 'CVS',

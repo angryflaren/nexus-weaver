@@ -1,6 +1,7 @@
-// A comprehensive list of files to be ignored by default.
-// This list focuses on generated files, logs, IDE settings, and other metadata
-// that do not typically contain core source code.
+// Полный список файлов, игнорируемых по умолчанию.
+// Этот список в основном содержит сгенерированные файлы, логи, настройки IDE и другие метаданные,
+// которые обычно не содержат основной исходный код.
+
 const defaultIgnoredFiles = new Set([
   // --- Исполняемые файлы, библиотеки и установщики (Риск безопасности и бесполезность для анализа) ---
   '.exe', '.msi', '.bat', '.cmd', '.sh', '.com', '.pif', '.scr',
@@ -24,7 +25,7 @@ const defaultIgnoredFiles = new Set([
 
   // --- Системные и OS-специфичные файлы ---
   '.DS_Store', '._*', 'Thumbs.db', 'desktop.ini',
-  '.Spotlight-V100', '.Trashes', 'NTUSER.DAT',
+  '.Spotlight-V100', '.Trashes', 'NTUSER.DAT', 'Ink',
 
   // --- Скомпилированный код и бинарные объекты ---
   '.o', '.obj', '.class', '.pyc', '.pyo', '.pyd', '.a', '.lib',
@@ -50,7 +51,6 @@ const defaultIgnoredFiles = new Set([
   'debug.log', 'perf.log',
 
   // --- Локальные переменные окружения (Чувствительная информация) ---
-  // ВАЖНО: .env.example или .env.template не игнорируются, что правильно.
   '.env', '.env.local', '.env.development', '.env.production', '.env.test',
   '.env.development.local', '.env.test.local', '.env.production.local', '.env.*.local',
 
