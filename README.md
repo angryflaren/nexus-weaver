@@ -37,6 +37,9 @@ This project was made with help from an AI assistant to build a useful tool for 
 * **Works in Browser**: No install needed. Your files stay on your computer. They are safe and private.
 * **Drag & Drop**: Just drop your folder to start. It's very easy.
 * **Smart Ignore**: It knows not to include folders like `node_modules` or `.git`. This saves you time.
+* **Add More Files:** You can add new files or folders without losing your current selection.
+* **File Search:** Quickly find the files you need in the tree with a search bar.
+* **Token Counter:** Shows an estimated token count so you don't exceed the AI's limit.
 * **Handles Images & Docs**: It can turn images and documents into text (using Base64) so they can be included.
 * **Easy Output**: Copy the final text with one click, or download it as a `.txt` file.
 * **Dark Mode**: Good for your eyes when you work at night.
@@ -79,7 +82,7 @@ This project is made and maintained by the following person.
 
 | Role      | Name             | Contacts                                                                                                                                                                                                                                                                                                                                                                        |
 | --------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Developer | Matthew Zhuchkov | <div style="white-space: nowrap;"><a href="mailto:matthewzhv@outlook.com" title="Contact via Outlook"><img src="https://upload.wikimedia.org/wikipedia/commons/d/df/Microsoft_Office_Outlook_%282018%E2%80%93present%29.svg" height="28" alt="Outlook Logo"></a> <a href="https://t.me/alikkuc" title="Contact via Telegram"><img src="https://cdn.simpleicons.org/telegram/26A5E4" height="28" alt="Telegram Logo"></a></div> |
+| Developer | Matthew Zhuchkov | <div style="white-space: nowrap;"><a href="mailto:matthewzhv@outlook.com" title="Contact via Outlook"><img src="https://upload.wikimedia.org/wikipedia/commons/c/cc/Microsoft_Outlook_Icon_%282025%E2%80%93present%29.svg" height="28" alt="Outlook Logo"></a> <a href="https://t.me/alikkuc" title="Contact via Telegram"><img src="https://cdn.simpleicons.org/telegram/26A5E4" height="28" alt="Telegram Logo"></a></div> |
 
 ## 📜 License
 
