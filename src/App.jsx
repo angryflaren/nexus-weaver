@@ -4,6 +4,7 @@ import defaultIgnoredFiles from './ignoreList.js';
 import ignoredFolderNames from './ignoreFolders.js';
 import defaultUncheckedFolders from './defaultUncheckedFolders.js';
 import defaultUncheckedSubstrings from './defaultUncheckedSubstrings.js';
+import heavyFiles from './heavyFiles.js';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 
@@ -515,6 +516,7 @@ const App = () => {
 
   const handleToggleSelection = useCallback((item) => {
     const pathsToToggle = getDescendantFilePaths(item);
+    
     const selectablePathsToToggle = pathsToToggle.filter(path => !isFileIgnored({ path, name: path.split('/').pop(), type: 'file' }));
     
     const newSelectedPaths = new Set(selectedPaths);
@@ -523,7 +525,17 @@ const App = () => {
     if (areAllSelected) {
       selectablePathsToToggle.forEach(path => newSelectedPaths.delete(path));
     } else {
-      selectablePathsToToggle.forEach(path => newSelectedPaths.add(path));
+      selectablePathsToToggle.forEach(path => {
+        const fileName = path.split('/').pop();
+        
+        const isHeavy = heavyFiles.has(fileName);
+
+        if (item.path !== path && isHeavy) {
+             return; 
+        }
+
+        newSelectedPaths.add(path);
+      });
     }
     setSelectedPaths(newSelectedPaths);
   }, [selectedPaths, isFileIgnored]);
