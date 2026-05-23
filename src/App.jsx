@@ -1,15 +1,15 @@
 import React, { useState, useRef, useEffect, useMemo, memo, useCallback, useLayoutEffect } from "react";
 import { createPortal } from 'react-dom';
-import defaultIgnoredFiles from './ignoreList.js';
-import ignoredFolderNames from './ignoreFolders.js';
-import defaultUncheckedFolders from './defaultUncheckedFolders.js';
-import defaultUncheckedSubstrings from './defaultUncheckedSubstrings.js';
-import heavyFiles from './heavyFiles.js';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 
-// --- СПИСКИ РАСШИРЕНИЙ И КОНСТАНТЫ (ВЕРХНИЙ УРОВЕНЬ) ---
+import defaultIgnoredFiles from './config/ignoreList.js';
+import ignoredFolderNames from './config/ignoreFolders.js';
+import defaultUncheckedFolders from './config/defaultUncheckedFolders.js';
+import defaultUncheckedSubstrings from './config/defaultUncheckedSubstrings.js';
+import heavyFiles from './config/heavyFiles.js';
 
+// --- СПИСКИ РАСШИРЕНИЙ И КОНСТАНТЫ (ВЕРХНИЙ УРОВЕНЬ) ---
 const icons = {
   file: <svg className="w-5 h-5" fill="none" strokeWidth={1.5} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>,
   folder: <svg className="w-5 h-5" fill="none" strokeWidth={1.5} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>,
@@ -59,30 +59,27 @@ const AboutModal = ({ onClose }) => {
 
 async function scanDirectory(directoryEntry) {
   const reader = directoryEntry.createReader();
-  let allEntries = [];
+  const allEntries = [];
 
-  const readEntries = () => {
-    return new Promise((resolve, reject) => {
-      reader.readEntries(async (entries) => {
-        if (entries.length === 0) {
-          resolve(allEntries);
-        } else {
-          allEntries = allEntries.concat(entries);
-          resolve(await readEntries());
-        }
-      }, reject);
-    });
-  };
+  const readEntries = () => new Promise((resolve, reject) => {
+    reader.readEntries(resolve, reject);
+  });
 
-  const entries = await readEntries();
+  // Надежное итеративное чтение батчей (обходим ограничение браузера в 100 файлов за вызов)
+  let entries;
+  do {
+    entries = await readEntries();
+    allEntries.push(...entries);
+  } while (entries.length > 0);
+
   const files = await Promise.all(
-    entries.map(entry =>
+    allEntries.map(entry =>
       entry.isFile
-        ? new Promise(resolve => entry.file(file => resolve(file)))
+        ? new Promise((resolve, reject) => entry.file(resolve, reject))
         : scanDirectory(entry)
     )
   );
-
+  
   return files.flat();
 }
 
@@ -201,7 +198,7 @@ const readFileAsDataURL = (file) => {
   });
 };
 
-// --- КОМПОНЕНТЫ ДЛЯ ВИРТУАЛЬНОГО СПИСКА (ВЕРХНИЙ УРОВЕНЬ) ---
+// --- Компоненты для виртуального списка (верхний уровень) ---
 
 const ResultRow = memo(({ index, style, data }) => (
     <div style={style} className="whitespace-pre font-mono text-sm leading-6">
@@ -217,6 +214,16 @@ const FileTreeRow = memo(({ index, style, data }) => {
     const isFolder = item.type === 'folder';
     const selectionState = getSelectionState(item);
     
+    // Единый обработчик взаимодействия для строки (позволяет кликать по именам файлов)
+    const handleRowInteraction = () => {
+        if (isFolder && !isSearching) {
+            handleToggleFolder(item.path);
+        } else if (!isFolder && !item.isIgnored) {
+            handleToggleSelection(item);
+        }
+    };
+
+    const isClickable = (isFolder && !isSearching) || (!isFolder && !item.isIgnored);
 
     return (
       <div style={style} className="flex items-center text-sm hover:bg-gray-500/10 pr-2">
@@ -228,57 +235,44 @@ const FileTreeRow = memo(({ index, style, data }) => {
             type="checkbox" 
             className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 flex-shrink-0"
             checked={selectionState === 'checked'}
-            
-        ref={el => el && (el.indeterminate = selectionState === 'indeterminate')}
+            ref={el => el && (el.indeterminate = selectionState === 'indeterminate')}
             onChange={() => handleToggleSelection(item)}
             disabled={item.isIgnored}
           />
           
           <div 
-            className={`file-icon ${isFolder && !isSearching ? 'cursor-pointer' : ''} ${item.isIgnored ? 'text-gray-500' : 'text-gray-700 dark:text-gray-300'}`}
-            onClick={() => isFolder && !isSearching && handleToggleFolder(item.path)}
+            className={`file-icon ${isClickable ? 'cursor-pointer' : ''} ${item.isIgnored ? 'text-gray-500' : 'text-gray-700 dark:text-gray-300'}`}
+            onClick={handleRowInteraction}
           >
-            {isFolder ?
-(openFolders.has(item.path) && !isSearching ? icons.folderOpen : icons.folder) : icons.file}
+            {isFolder ? (openFolders.has(item.path) && !isSearching ? icons.folderOpen : icons.folder) : icons.file}
           </div>
           
           <span 
-            className={`file-name truncate min-w-0 ${isFolder && !isSearching ? 'cursor-pointer' : ''} ${item.isIgnored ? 'text-gray-500' : ''}`}
-            onClick={() => isFolder && !isSearching && handleToggleFolder(item.path)}
+            className={`file-name truncate min-w-0 ${isClickable ? 'cursor-pointer' : ''} ${item.isIgnored ? 'text-gray-500' : ''}`}
+            onClick={handleRowInteraction}
             title={item.name}
           >
             {item.name}
           </span>
           
           <div className="flex items-center space-x-1 ml-auto flex-shrink-0">
-			{/* 1. Hard Ignore (Серый) */}
             {item.isIgnored ? (
               <div onMouseEnter={(e) => showTooltip("This file is ignored. It appears to be a system, dependency, or binary file. It cannot be selected.", e)} onMouseLeave={hideTooltip}>
                 <div className="text-gray-500">{icons.info}</div>
               </div>
-            
-            // --- Сюда попадают только НЕ игнорируемые ---
-
-            /* 2. Image (Синий) - для Файлов и Папок */
             ) : item.specialType === 'image' ? (
               <div onMouseEnter={(e) => showTooltip("Encoded as Base64. Warning: increases file size and can be slow for AI.", e)} onMouseLeave={hideTooltip}>
                 <div className="text-blue-400">{icons.info}</div>
               </div>
-            
-            /* 3. Document (Зеленый) - для Файлов и Папок */
             ) : item.specialType === 'document' ? (
               <div onMouseEnter={(e) => showTooltip("Encoded as Base64. Warning: increases file size and can be slow for AI.", e)} onMouseLeave={hideTooltip}>
                 <div className="text-green-500">{icons.info}</div>
               </div>
-
-            /* 4. Soft Ignore (Желтый) - для Файлов и Папок */
             ) : item.specialType === 'soft_ignore' ? (
               <div onMouseEnter={(e) => showTooltip("This is unchecked by default (e.g., tests, docs). You can still select it.", e)} onMouseLeave={hideTooltip}>
                 <div className="text-yellow-500">{icons.info}</div>
               </div>
-            
-            ) : null /* 5. Обычный файл/папка - нет иконки */}
-
+            ) : null}
           </div>
         </div>
       </div>
@@ -297,26 +291,54 @@ const App = () => {
   const [processingProgress, setProcessingProgress] = useState(0);
   const [currentProcessingFile, setCurrentProcessingFile] = useState("");
   const [resultLines, setResultLines] = useState([]);
-  const [darkMode, setDarkMode] = useState(false);
   const [tooltip, setTooltip] = useState({ visible: false, content: '', x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const [allFilesMap, setAllFilesMap] = useState(new Map());
   const [rawFiles, setRawFiles] = useState([]);
   const openAboutModal = useCallback(() => setIsAboutModalOpen(true), []);
   const closeAboutModal = useCallback(() => setIsAboutModalOpen(false), []);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   
   const folderInputRef = useRef(null);
   const fileInputRef = useRef(null);
+  const dragCounter = useRef(0);
+  
+  const [darkMode, setDarkMode] = useState(() => {
+    const savedTheme = localStorage.getItem('nexus-theme');
+    if (savedTheme) return savedTheme === 'dark';
+    return false;
+  });
+  
+  // --- БЛОК ЭФФЕКТОВ (useEffect) ---
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setSearchQuery(searchInput);
+    }, 250);
+    return () => clearTimeout(handler);
+  }, [searchInput]);
+
+  // Сохранение темы
+  useEffect(() => {
+    localStorage.setItem('nexus-theme', darkMode ? 'dark' : 'light');
+  }, [darkMode]);
+  
+  // ---------------------------------
+  
   
   const isFileIgnored = useCallback((item) => {
-	if (defaultIgnoredFiles.has(item.name)) return true;
-    const extension = `.${item.name.split('.').pop()}`;
-    if (defaultIgnoredFiles.has(extension)) return true;
+    // Проверяем точное совпадение имени
+    if (defaultIgnoredFiles.has(item.name)) return true;
 
+    if (item.type === 'file' && item.name.includes('.')) {
+        const extension = `.${item.name.split('.').pop().toLowerCase()}`;
+        if (defaultIgnoredFiles.has(extension)) return true;
+    }
+
+    // Проверка родительских путей на наличие игнорируемых папок
     if (item.path) {
       const pathParts = item.path.split('/');
       const loopLimit = item.type === 'folder' ? pathParts.length : pathParts.length - 1;
@@ -394,7 +416,7 @@ const App = () => {
           
           const folderNameHasSubstring = uncheckedSubstringsArray.some(substring => item.name.toLowerCase().includes(substring));
           const folderNameIsInList = defaultUncheckedFolders.has(item.name);
-
+          
           if (folderNameHasSubstring || folderNameIsInList) {
             newAncestorFlag = true;
             item.specialType = 'soft_ignore';
@@ -403,10 +425,14 @@ const App = () => {
 
           if (item.children && item.children.length > 0) {
             const childStatus = traverseAndAnalyze(item.children, newAncestorFlag);
-
+            
             if (childStatus.hasSelectable) {
               hasAnySelectable = true;
-              initialOpenFolders.add(item.path);
+              
+              // Открываем папку по умолчанию ТОЛЬКО если она не "желтая"
+              if (item.specialType !== 'soft_ignore') {
+                initialOpenFolders.add(item.path);
+              }
               
               childStatus.foundTypes.forEach(type => foundTypes.add(type));
               
@@ -434,25 +460,25 @@ const App = () => {
   
   const handleFilesAdded = useCallback(async (newFilesArray) => {
     if (!newFilesArray || newFilesArray.length === 0) {
-		setIsScanning(false);
-		return;
-	}
-	
-	await new Promise(resolve => setTimeout(resolve, 0));
+        setIsScanning(false);
+        return;
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 0));
 
     const combinedFiles = [...rawFiles, ...newFilesArray];
 
     const uniqueFilesMap = new Map();
     for (const file of combinedFiles) {
         const path = file.webkitRelativePath || file.name;
-		uniqueFilesMap.set(path, file);
+        uniqueFilesMap.set(path, file);
     }
     const allUniqueFiles = Array.from(uniqueFilesMap.values());
-	
-	setAllFilesMap(uniqueFilesMap);
-	
-	const oldFilePaths = new Set(rawFiles.map(f => f.webkitRelativePath || f.name));
-	
+    
+    setAllFilesMap(uniqueFilesMap);
+    
+    const oldFilePaths = new Set(rawFiles.map(f => f.webkitRelativePath || f.name));
+    
     setRawFiles(allUniqueFiles);
 
     const buildResult = buildTreeFromFiles(allUniqueFiles);
@@ -460,50 +486,92 @@ const App = () => {
     
     const { rootName, newFileTree, initialSelection, initialOpenFolders } = buildResult;
 
-	setFileTree(newFileTree);
-	setOpenFolders(prevOpen => new Set([...prevOpen, ...initialOpenFolders]));
-	
+    setFileTree(newFileTree);
+    setOpenFolders(prevOpen => new Set([...prevOpen, ...initialOpenFolders]));
+    
     if (currentScreen === "upload") {
         setFolderName(rootName);
         setCurrentScreen("processing");
-		setSelectedPaths(initialSelection);
+        setSelectedPaths(initialSelection);
     } else {
-		const newSelections = new Set();
-		for (const path of initialSelection) {
-			if (!oldFilePaths.has(path)) {
-				newSelections.add(path);
-			}
-		}
-		setSelectedPaths(prevSelected => new Set([...prevSelected, ...newSelections]));
-	}
+        const newSelections = new Set();
+        for (const path of initialSelection) {
+            if (!oldFilePaths.has(path)) {
+                newSelections.add(path);
+            }
+        }
+        setSelectedPaths(prevSelected => new Set([...prevSelected, ...newSelections]));
+    }
 
-    setOpenFolders(prevOpen => new Set([...prevOpen, ...initialOpenFolders]));
-	setIsScanning(false);
+    setIsScanning(false);
+  }, [rawFiles, buildTreeFromFiles, currentScreen]);
 
-  }, [rawFiles, buildTreeFromFiles, isFileIgnored, currentScreen]);
-
-    const handleDrop = useCallback(async (e) => {
-		e.preventDefault();
-		setIsDragging(false);
-		setIsScanning(true);
-		if (e.dataTransfer.items) {
-			const files = await getDroppedFiles(e.dataTransfer.items);
-			await handleFilesAdded(files);
-		} else {
-			setIsScanning(false);
-		}
-	  }, [handleFilesAdded]);
-
-    const handleInputChange = useCallback((e) => {
-		const fileList = e.target.files;
-		if (e.target) e.target.value = null;
-		setIsScanning(true);
-		setTimeout(async () => {
-			const files = Array.from(fileList);
-			await handleFilesAdded(files);
-		}, 0);
+  const handleDragEnter = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current += 1;
     
-	}, [handleFilesAdded]);
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current -= 1;
+    
+    if (dragCounter.current === 0) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  }, []);
+
+  const handleDrop = useCallback(async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    dragCounter.current = 0;
+    setIsDragging(false);
+
+    if (!e.dataTransfer.items || e.dataTransfer.items.length === 0) {
+      return;
+    }
+
+    setIsScanning(true);
+    try {
+      const files = await getDroppedFiles(e.dataTransfer.items);
+      await handleFilesAdded(files);
+    } catch (error) {
+      console.error("Error processing dropped files:", error);
+      setIsScanning(false);
+    }
+  }, [handleFilesAdded]);
+
+  const handleInputChange = useCallback((e) => {
+    const fileList = e.target.files;
+    
+    if (!fileList || fileList.length === 0) return;
+
+    const files = Array.from(fileList);
+    
+    if (e.target) {
+        e.target.value = ''; 
+    }
+    
+    setIsScanning(true);
+    
+    setTimeout(async () => {
+        await handleFilesAdded(files);
+    }, 50);
+  }, [handleFilesAdded]);
 
   const handleToggleFolder = useCallback((folderPath) => {
     setOpenFolders(prev => {
@@ -516,27 +584,46 @@ const App = () => {
 
   const handleToggleSelection = useCallback((item) => {
     const pathsToToggle = getDescendantFilePaths(item);
-    
     const selectablePathsToToggle = pathsToToggle.filter(path => !isFileIgnored({ path, name: path.split('/').pop(), type: 'file' }));
     
+    if (selectablePathsToToggle.length === 0) return;
+
     const newSelectedPaths = new Set(selectedPaths);
-    const areAllSelected = selectablePathsToToggle.length > 0 && selectablePathsToToggle.every(path => newSelectedPaths.has(path));
-    
-    if (areAllSelected) {
-      selectablePathsToToggle.forEach(path => newSelectedPaths.delete(path));
-    } else {
-      selectablePathsToToggle.forEach(path => {
+    const isFolderClick = item.type === 'folder';
+
+    // Разделяем пути на обычные и "тяжелые"
+    const normalPaths = [];
+    const heavyPaths = [];
+
+    selectablePathsToToggle.forEach(path => {
         const fileName = path.split('/').pop();
-        
-        const isHeavy = heavyFiles.has(fileName);
-
-        if (item.path !== path && isHeavy) {
-             return; 
+        if (heavyFiles.has(fileName)) {
+            heavyPaths.push(path);
+        } else {
+            normalPaths.push(path);
         }
+    });
+    
+    let areTargetPathsSelected = false;
 
-        newSelectedPaths.add(path);
-      });
+    if (isFolderClick && normalPaths.length > 0) {
+        areTargetPathsSelected = normalPaths.every(path => newSelectedPaths.has(path));
+    } else {
+        areTargetPathsSelected = selectablePathsToToggle.every(path => newSelectedPaths.has(path));
     }
+
+    if (areTargetPathsSelected) {
+        // Снимаем выделение со всех доступных файлов
+        selectablePathsToToggle.forEach(path => newSelectedPaths.delete(path));
+    } else {
+        // Выделяем файлы
+        if (isFolderClick && normalPaths.length > 0) {
+            normalPaths.forEach(path => newSelectedPaths.add(path)); // Игнорируем тяжелые при массовом выделении
+        } else {
+            selectablePathsToToggle.forEach(path => newSelectedPaths.add(path)); // Выделяем конкретный файл
+        }
+    }
+
     setSelectedPaths(newSelectedPaths);
   }, [selectedPaths, isFileIgnored]);
   
@@ -587,6 +674,12 @@ const App = () => {
 
       if (file) {
         try {
+          // ограничение на файл 100 MB
+          if (file.size > 100 * 1024 * 1024) {
+             mergedContent += `----\n${path}\n[Error: File size exceeds the 100MB limit to prevent browser crash]\n`;
+             continue;
+          }
+          
           const fileExtension = path.split('.').pop().toLowerCase();
           let content;
 
@@ -606,11 +699,13 @@ const App = () => {
           mergedContent += `----\n${path}\n[Error: Could not read file content]\n`;
         }
       }
+      
       setProcessingProgress(((i + 1) / totalFiles) * 100);
       if (i % 10 === 0) {
         await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
+    
     mergedContent += '--END--';
     setResultLines(mergedContent.split('\n'));
     setIsProcessing(false);
@@ -633,6 +728,7 @@ const App = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = 'nexus-weaver-output.txt';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
+	URL.revokeObjectURL(url);
   }, [resultLines]);
   
   const toggleDarkMode = useCallback(() => setDarkMode(d => !d), []);
@@ -771,10 +867,10 @@ const App = () => {
             ) : (
               <div
                 className={`w-full max-w-3xl border-2 border-dashed rounded-2xl p-16 text-center transition-all duration-300 ${isDragging ? 'border-blue-500 bg-blue-500/10' : (darkMode ? 'border-gray-600' : 'border-gray-300')}`}
-                onDragEnter={() => setIsDragging(true)}
-                onDragLeave={() => setIsDragging(false)}
+                onDragEnter={handleDragEnter}
+                onDragLeave={handleDragLeave}
+                onDragOver={handleDragOver}
                 onDrop={handleDrop}
-                onDragOver={(e) => e.preventDefault()}
               >
                 <svg className="w-16 h-16 mx-auto mb-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
@@ -832,10 +928,10 @@ const App = () => {
                 </div>
                 <input
                   type="text"
-                  placeholder="Filter files..."
+                  placeholder="Filter files ..."
                   className={`w-full py-2 pl-9 pr-4 rounded-lg text-sm ${darkMode ? 'bg-gray-700 text-gray-100 placeholder-gray-400' : 'bg-gray-100 text-gray-800 placeholder-gray-500'} border-none focus:ring-2 focus:ring-blue-500`}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
                 />
               </div>
 
@@ -885,7 +981,7 @@ const App = () => {
 			</div>
 		  </div>
 
-		  <div className={`flex-grow min-h-0 w-full p-2 ${darkMode ? 'bg-gray-900' : 'bg-white'}`}>
+		  <div className={`flex-grow min-h-0 w-full p-2 overflow-x-auto ${darkMode ? 'bg-gray-900' : 'bg-white'}`}>
 			<AutoSizer>
 			  {({ height, width }) => (
 				<List
