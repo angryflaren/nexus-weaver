@@ -18,16 +18,13 @@ const defaultIgnoredFiles = new Set([
   '.sqlite', '.sqlite3', '.db', '.mdb', '.accdb', '.sdf',
 
   // --- Системный и OS-специфичный мусор ---
-  '.DS_Store', '._*', 'Thumbs.db', 'desktop.ini', '.Spotlight-V100', '.Trashes', 'NTUSER.DAT', 'Ink',
+  '.DS_Store', 'Thumbs.db', 'desktop.ini', '.Spotlight-V100', '.Trashes', 'NTUSER.DAT', 'Ink',
 
   // --- Скомпилированные объекты и кэш кода ---
   '.o', '.obj', '.class', '.pyc', '.pyo', '.pyd', '.a', '.lib', '.egg', '.whl',
 
   // --- Базовые иконки ---
   'favicon.ico', 'apple-touch-icon.png',
-
-  // --- Сертификаты и ключи ---
-  '*.pem', '*.key',
 ]);
 
 export default defaultIgnoredFiles;

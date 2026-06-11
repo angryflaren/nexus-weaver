@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo, memo, useCallback, useLayo
 import { createPortal } from 'react-dom';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
+import JSZip from 'jszip';
 
 import defaultIgnoredFiles from './config/ignoreList.js';
 import ignoredFolderNames from './config/ignoreFolders.js';
@@ -9,7 +10,7 @@ import defaultUncheckedFolders from './config/defaultUncheckedFolders.js';
 import defaultUncheckedSubstrings from './config/defaultUncheckedSubstrings.js';
 import heavyFiles from './config/heavyFiles.js';
 
-// --- СПИСКИ РАСШИРЕНИЙ И КОНСТАНТЫ (ВЕРХНИЙ УРОВЕНЬ) ---
+// --- Спиский расширений и константы (верхний уровень) ---
 const icons = {
   file: <svg className="w-5 h-5" fill="none" strokeWidth={1.5} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>,
   folder: <svg className="w-5 h-5" fill="none" strokeWidth={1.5} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>,
@@ -23,29 +24,118 @@ const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'sv
 const hardIgnoredExtensions = new Set(['exe', 'msi', 'sys', 'bat', 'cmd', 'sh', 'com', 'pif', 'scr', 'app', 'pkg', 'dmg', 'cpl', 'gadget', 'jar', 'action', 'wsf', 'vbs', 'dll', 'so', 'dylib', 'o', 'obj', 'a', 'lib', 'sys', 'drv', 'zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'tgz', 'iso', 'img', 'cab', 'arj', 'lha', 'ace', 'lbr', 'lqr', 'war', 'vhd', 'vmdk', 'vdi', 'vbox', 'vmx', 'pvs', 'hdd', 'nrg', 'ds_store', 'thumbs.db', 'desktop.ini', 'ntuser.dat', 'icon', 'ini', 'inf', 'reg', 'plist', 'sqlite', 'sqlite3', 'db', 'mdb', 'accdb', 'sdf', 'dbf', 'dat', 'frm', 'myd', 'myi', 'nsf', 'mp4', 'm4v', 'mov', 'avi', 'mkv', 'webm', 'wmv', 'flv', 'mpg', 'mpeg', 'asf', 'vob', '3gp', 'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'aiff', 'wma', 'mid', 'midi', 'm3u', 'pls', 'asx', 'bup', 'ifo', 'ttf', 'otf', 'woff', 'woff2', 'eot', 'tmp', 'temp', 'bak', 'old', '$$$', '.~', 'part', 'parts', 'crdownload', 'download', 'swp', 'swo', 'bkp', 'bk!', 'torrent', 'pak', 'wad', 'vpk', 'sav', 'bsp', 'nes', 'sfc', 'gb', 'gba', 'nds', 'rom', 'pdb', 'ilk', 'map', 'ncb', 'suo', 'pch', 'idb', 'gch', 'objdump', 'key', 'pem', 'cer', 'crt', 'pfx', 'p12', 'p7s', 'p7b', 'eml', 'msg', 'mbox', 'shp', 'shx', 'bin', 'cue', 'nfo', 'lock', 'pid', 'chk', 'cda']);
 const documentExtensions = new Set(['pdf', 'doc', 'docx', 'docm', 'dot', 'dotx', 'ppt', 'pptx', 'pps', 'ppsx', 'xls', 'xlsx', 'xlsm', 'xlt', 'xltx', 'pub', 'vsd', 'vsdx', 'odt', 'odp', 'ods', 'odg', 'odf', 'ott', 'otp', 'ots', 'pages', 'key', 'numbers', 'tex', 'epub', 'mobi', 'azw', 'azw3', 'lit', 'rtf', 'xps', 'mht', 'mhtml', 'mpp']);
 
+const parseWovenText = (text) => {
+    const files = [];
+    const lines = text.split('\n');
+    let i = 0;
+    
+    while (i < lines.length) {
+        if (lines[i].trim() === '----') {
+            i++;
+            if (i >= lines.length || lines[i].trim() === '--END--') break;
+            
+            const path = lines[i].trim();
+            i++;
+            
+            const contentLines = [];
+            while (i < lines.length && lines[i].trim() !== '----' && lines[i].trim() !== '--END--') {
+                contentLines.push(lines[i]);
+                i++;
+            }
+            
+            const rawContent = contentLines.join('\n');
+            
+            // снимаем защитное экранирование
+            const content = rawContent
+                .replace(/^\\(\\*----)$/gm, '$1')
+                .replace(/^\\(\\*--END--)$/gm, '$1');
+                
+            let fileObj = { path, textContent: content, isBinary: false };
+			
+            // проверяем, закодирован ли файл как Base64 (картинки или документы)
+            const isImage = content.startsWith('[IMAGE_DATA: data:');
+            const isDoc = content.startsWith('[DOCUMENT_DATA: data:');
+            if ((isImage || isDoc) && content.endsWith(']')) {
+                fileObj.isBinary = true;
+                const prefixLen = isImage ? '[IMAGE_DATA: '.length : '[DOCUMENT_DATA: '.length;
+                fileObj.dataUrl = content.slice(prefixLen, -1).trim();
+            }
 
-const AboutModal = ({ onClose }) => {
+            files.push(fileObj);
+        } else if (lines[i].trim() === '--END--') {
+            break;
+        } else {
+            i++;
+        }
+    }
+    
+    return files;
+};
+
+const buildUnwovenFileTree = (files) => {
+  const root = { name: 'root', type: 'folder', children: [] };
+  const map = { 'root': root };
+  for (const file of files) {
+    const path = file.path;
+    const parts = path.split('/');
+    let parent = root;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const isFolder = i < parts.length - 1;
+      const currentPath = parts.slice(0, i + 1).join('/');
+      if (!map[currentPath]) {
+        const newItem = { 
+          name: part, 
+          type: isFolder ? 'folder' : 'file', 
+          path: currentPath, 
+          children: isFolder ? [] : undefined, 
+          unwovenFile: file 
+        };
+        map[currentPath] = newItem;
+        parent.children.push(newItem);
+      }
+      if (isFolder) parent = map[currentPath];
+    }
+  }
+  return root.children;
+};
+
+const getUnwovenDescendantFilePaths = (item) => {
+  if (item.type === 'file') return [item.path];
+  let paths = [];
+  if (item.children) {
+    for (const child of item.children) {
+      paths.push(...getUnwovenDescendantFilePaths(child));
+    }
+  }
+  return paths;
+};
+
+
+const AboutModal = ({ onClose, darkMode }) => {
   return createPortal(
-    // Overlay (полупрозрачный фон)
-    <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4">
-      {/* Контейнер окна */}
-      <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-2xl max-w-md w-full text-gray-900 dark:text-gray-200">
-        <h2 className="text-2xl font-bold mb-4">About Nexus Weaver</h2>
-        <p className="mb-4 text-sm">
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex justify-center items-center z-50 p-4 transition-all duration-300">
+      
+      {/* Контейнер окна с динамическими классами */}
+      <div className={`p-8 rounded-[2rem] shadow-2xl max-w-md w-full transition-colors duration-300 ${darkMode ? 'bg-gray-800 text-gray-200' : 'bg-white text-gray-900'}`}>
+        <h2 className={`text-2xl font-bold mb-4 tracking-tight ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+          About Nexus Weaver
+        </h2>
+        <p className="mb-4 text-sm leading-relaxed">
           Nexus Weaver helps you combine project files into one single text file. This is very useful for large AI models.
         </p>
-        <p className="mb-4 text-sm">
+        <p className="mb-6 text-sm leading-relaxed">
           Drag and drop your project, select the files you need, and the app will create a single output for you. Images and documents are safely converted.
         </p>
         <p className="text-sm">
           For any questions, please contact me at:<br/>
-          <a href="mailto:matthewzhv@outlook.com" className="text-blue-500 hover:underline">
+          <a href="mailto:matthewzhv@outlook.com" className="text-blue-500 hover:text-blue-600 font-medium transition-colors mt-1 inline-block">
             matthewzhv@outlook.com
           </a>
         </p>
         <button
           onClick={onClose}
-          className="mt-6 w-full font-semibold py-2 px-4 rounded-lg transition-colors bg-gray-200 hover:bg-gray-300 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-white"
+          className={`mt-8 w-full font-semibold py-3 px-4 rounded-2xl shadow-sm transition-all duration-200 transform active:scale-95 ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
         >
           Close
         </button>
@@ -55,8 +145,7 @@ const AboutModal = ({ onClose }) => {
   );
 };
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (ВЕРХНИЙ УРОВЕНЬ) ---
-
+// --- Вспомогательные функции (верхний уровень) ---
 async function scanDirectory(directoryEntry) {
   const reader = directoryEntry.createReader();
   const allEntries = [];
@@ -65,7 +154,7 @@ async function scanDirectory(directoryEntry) {
     reader.readEntries(resolve, reject);
   });
 
-  // Надежное итеративное чтение батчей (обходим ограничение браузера в 100 файлов за вызов)
+  // надежное итеративное чтение батчей (обходим ограничение браузера в 100 файлов за вызов)
   let entries;
   do {
     entries = await readEntries();
@@ -136,41 +225,33 @@ const getDescendantFilePaths = (item) => {
 const Tooltip = ({ content, x, y }) => {
   const ref = useRef(null);
   const [adjustedX, setAdjustedX] = useState(x);
-  const [opacity, setOpacity] = useState(0); // Начинаем невидимым
+  const [opacity, setOpacity] = useState(0);
 
   useLayoutEffect(() => {
     if (ref.current) {
       const tooltipWidth = ref.current.offsetWidth;
-      const padding = 8; // Небольшой отступ от краев экрана
-
-      // Идеальная центральная позиция
-      const idealX = x; 
+      const padding = 8; // небольшой отступ от краев экрана
+	  
+      const idealX = x; // центральная позиция
       
-      // Вычисляем реальные левый и правый края подсказки
+      // вычисляем реальные левый и правый края подсказки
       const proposedLeft = idealX - (tooltipWidth / 2);
       const proposedRight = idealX + (tooltipWidth / 2);
 
-      let newX = idealX; // По умолчанию используем идеальную позицию
+      let newX = idealX; // по умолчанию используем идеальную позицию
 
-      // 1. Проверяем левый край
       if (proposedLeft < padding) {
-        // Подсказка вылезает слева.
-        // "Прижимаем" ее к левому краю, сдвигая центр (X) вправо.
-        // newX = (желаемый левый край) + (половина ширины)
         newX = padding + (tooltipWidth / 2);
       } 
-      // 2. Проверяем правый край
+
       else if (proposedRight > (window.innerWidth - padding)) {
-        // Подсказка вылезает справа.
-        // "Прижимаем" ее к правому краю, сдвигая центр (X) влево.
-        // newX = (желаемый правый край) - (половина ширины)
         newX = (window.innerWidth - padding) - (tooltipWidth / 2);
       }
       
       setAdjustedX(newX);
-      setOpacity(1); // Делаем видимым в правильной позиции
+      setOpacity(1);
     }
-  }, [content, x, y]); // Пересчитываем, если меняется контент или позиция
+  }, [content, x, y]); // пересчитываем, если меняется контент или позиция
 
   return createPortal(
     <div 
@@ -180,7 +261,7 @@ const Tooltip = ({ content, x, y }) => {
         top: y, 
         left: adjustedX, 
         opacity: opacity, 
-        transition: 'opacity 0.1s' // Плавное появление
+        transition: 'opacity 0.1s'
       }}
     >
       {content}
@@ -199,12 +280,63 @@ const readFileAsDataURL = (file) => {
 };
 
 // --- Компоненты для виртуального списка (верхний уровень) ---
-
 const ResultRow = memo(({ index, style, data }) => (
     <div style={style} className="whitespace-pre font-mono text-sm leading-6">
         {data[index]}
     </div>
 ));
+
+const UnwovenFileTreeRow = memo(({ index, style, data }) => {
+    const { items, selectedPaths, handleToggleSelection, handleToggleFolder, openFolders, icons } = data;
+    const item = items[index];
+    if (!item) return null;
+
+    const isFolder = item.type === 'folder';
+    
+    // Вычисляем состояние чекбокса (checked / unchecked / indeterminate)
+    const descendantPaths = getUnwovenDescendantFilePaths(item);
+    const selectedCount = descendantPaths.filter(p => selectedPaths.has(p)).length;
+    let selectionState = 'unchecked';
+    if (selectedCount > 0) {
+        selectionState = selectedCount === descendantPaths.length ? 'checked' : 'indeterminate';
+    }
+
+    const handleRowInteraction = () => {
+        if (isFolder && !data.isSearching) {
+            handleToggleFolder(item.path);
+        } else {
+            handleToggleSelection(item);
+        }
+    };
+
+    return (
+      <div style={style} className="flex items-center text-sm hover:bg-gray-500/10 pr-2">
+        <span style={{ width: `${item.depth * 24}px` }} className="flex-shrink-0" />
+        
+        <div className="flex flex-1 min-w-0 items-center space-x-2 py-1">
+          <input 
+            type="checkbox" 
+            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 flex-shrink-0 cursor-pointer"
+            checked={selectionState === 'checked'}
+            ref={el => el && (el.indeterminate = selectionState === 'indeterminate')}
+            onChange={() => handleToggleSelection(item)}
+          />
+          
+          <div className="file-icon cursor-pointer text-gray-700 dark:text-gray-300" onClick={handleRowInteraction}>
+            {isFolder ? (openFolders.has(item.path) ? icons.folderOpen : icons.folder) : icons.file}
+          </div>
+          
+          <span 
+            className="file-name truncate min-w-0 cursor-pointer" 
+            onClick={handleRowInteraction} 
+            title={item.name}
+          >
+            {item.name}
+          </span>
+        </div>
+      </div>
+    );
+});
 
 const FileTreeRow = memo(({ index, style, data }) => {
     const { items, getSelectionState, handleToggleSelection, handleToggleFolder, openFolders, showTooltip, hideTooltip, isSearching } = data;
@@ -279,10 +411,36 @@ const FileTreeRow = memo(({ index, style, data }) => {
     );
 });
 
-// --- ОСНОВНОЙ КОМПОНЕНТ ПРИЛОЖЕНИЯ ---
+const TokenCounter = memo(({ charCount, showTooltip, hideTooltip, icons }) => {
+    const tokenCount = Math.round(charCount / 4);
+    const isDanger = tokenCount > 250000;
+    const tooltipText = "Token count is very high. Models may struggle to read this.";
+    return (
+        <div className={`flex items-center space-x-2 text-sm ${isDanger ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'}`}>
+            <span className={isDanger ? 'font-bold' : ''}>
+                {tokenCount.toLocaleString('en-US')} tokens
+            </span>
+            <span className="text-xs">
+                (~{charCount.toLocaleString('en-US')} chars)
+            </span>
+            {isDanger && (
+                <div 
+                    onMouseEnter={(e) => showTooltip(tooltipText, e)} 
+                    onMouseLeave={hideTooltip}
+                    className="cursor-help"
+                >
+                    {icons.info}
+                </div>
+            )}
+        </div>
+    );
+});
 
+
+// --- ОСНОВНОЙ КОМПОНЕНТ ПРИЛОЖЕНИЯ ---
 const App = () => {
   const [currentScreen, setCurrentScreen] = useState("upload");
+  const [appMode, setAppMode] = useState("weave");
   const [fileTree, setFileTree] = useState([]);
   const [folderName, setFolderName] = useState("");
   const [selectedPaths, setSelectedPaths] = useState(new Set());
@@ -303,17 +461,30 @@ const App = () => {
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   
+  const [unwovenFiles, setUnwovenFiles] = useState([]);
+  const [unwovenFileTree, setUnwovenFileTree] = useState([]);
+  const [unwovenSelectedPaths, setUnwovenSelectedPaths] = useState(new Set());
+  const [unwovenOpenFolders, setUnwovenOpenFolders] = useState(new Set());
+  const [unweaveStats, setUnweaveStats] = useState({ fileName: '', fileCount: 0 });
+  const unweaveFileInputRef = useRef(null);
+  
   const folderInputRef = useRef(null);
   const fileInputRef = useRef(null);
+  
   const dragCounter = useRef(0);
   
   const [darkMode, setDarkMode] = useState(() => {
-    const savedTheme = localStorage.getItem('nexus-theme');
-    if (savedTheme) return savedTheme === 'dark';
+    try {
+        const savedTheme = localStorage.getItem('nexus-theme');
+        if (savedTheme) return savedTheme === 'dark';
+    } catch (e) {
+        console.warn('localStorage is blocked, defaulting to light mode');
+    }
+
     return false;
   });
   
-  // --- БЛОК ЭФФЕКТОВ (useEffect) ---
+  // --- Блок эффектов (useEffect) ---
   useEffect(() => {
     const handler = setTimeout(() => {
       setSearchQuery(searchInput);
@@ -321,31 +492,82 @@ const App = () => {
     return () => clearTimeout(handler);
   }, [searchInput]);
 
-  // Сохранение темы
-  useEffect(() => {
-    localStorage.setItem('nexus-theme', darkMode ? 'dark' : 'light');
+  useEffect(() => { // сохранение темы
+    try {
+        localStorage.setItem('nexus-theme', darkMode ? 'dark' : 'light');
+    } catch (e) {}
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
   }, [darkMode]);
-  
-  // ---------------------------------
-  
+
+  useEffect(() => { // защита от открытия файла в браузере при промахе мимо зоны drop
+    const preventNav = (e) => e.preventDefault();
+    window.addEventListener('dragover', preventNav);
+    window.addEventListener('drop', preventNav);
+    return () => {
+      window.removeEventListener('dragover', preventNav);
+      window.removeEventListener('drop', preventNav);
+    };
+  }, []);
+
+
+ 
+
+  const handleDownloadZip = useCallback(async () => {
+    const zip = new JSZip();
+    
+    // Фильтруем массив (JSZip берет только те файлы, которые есть в актуальном Set-е)
+    const filesToZip = unwovenFiles.filter(f => unwovenSelectedPaths.has(f.path));
+    
+    filesToZip.forEach(f => {
+        if (f.isBinary) {
+            const base64Data = f.dataUrl.split(',')[1];
+            zip.file(f.path, base64Data, { base64: true });
+        } else {
+            zip.file(f.path, f.textContent);
+        }
+    });
+    
+    const content = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(content);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${unweaveStats.fileName.replace(/\.txt$/i, '')}.zip`
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [unwovenFiles, unwovenSelectedPaths, unweaveStats]);
   
   const isFileIgnored = useCallback((item) => {
-    // Проверяем точное совпадение имени
-    if (defaultIgnoredFiles.has(item.name)) return true;
+    const itemName = item.name;
+    const lowerName = itemName.toLowerCase();
 
-    if (item.type === 'file' && item.name.includes('.')) {
-        const extension = `.${item.name.split('.').pop().toLowerCase()}`;
+    if (item.type === 'file' && itemName.startsWith('._')) return true;
+    if (defaultIgnoredFiles.has(itemName)) return true;
+    if (lowerName === 'thumbs.db' || lowerName === 'desktop.ini' || lowerName === 'ntuser.dat') return true;
+    if (item.type === 'file' && itemName.includes('.')) {
+        const extension = `.${itemName.split('.').pop().toLowerCase()}`;
         if (defaultIgnoredFiles.has(extension)) return true;
     }
 
-    // Проверка родительских путей на наличие игнорируемых папок
     if (item.path) {
       const pathParts = item.path.split('/');
       const loopLimit = item.type === 'folder' ? pathParts.length : pathParts.length - 1;
+      
       for (let i = 0; i < loopLimit; i++) {
-        if (ignoredFolderNames.has(pathParts[i])) return true;
+        const part = pathParts[i];
+        // Проверяем как оригинальный регистр (node_modules), так и нижний (Release -> release)
+        if (ignoredFolderNames.has(part) || ignoredFolderNames.has(part.toLowerCase())) {
+            return true;
+        }
       }
     }
+    
     return false;
   }, []);
 
@@ -429,7 +651,7 @@ const App = () => {
             if (childStatus.hasSelectable) {
               hasAnySelectable = true;
               
-              // Открываем папку по умолчанию ТОЛЬКО если она не "желтая"
+              // открываем папку по умолчанию ТОЛЬКО если она не "желтая"
               if (item.specialType !== 'soft_ignore') {
                 initialOpenFolders.add(item.path);
               }
@@ -534,6 +756,52 @@ const App = () => {
     }
   }, []);
 
+  const processUnweaveFile = useCallback(async (file) => {
+    setIsScanning(true);
+    try {
+        const text = await file.text();
+        const parsedFiles = parseWovenText(text);
+        setUnwovenFiles(parsedFiles);
+        
+        const tree = buildUnwovenFileTree(parsedFiles);
+        setUnwovenFileTree(tree);
+        
+        const allPaths = parsedFiles.map(f => f.path);
+        setUnwovenSelectedPaths(new Set(allPaths));
+        
+        const initialFolders = new Set();
+        const collectFolders = (items) => {
+            items.forEach(item => {
+                if (item.type === 'folder') {
+                    initialFolders.add(item.path);
+                    if (item.children) collectFolders(item.children);
+                }
+            });
+        };
+        collectFolders(tree);
+        setUnwovenOpenFolders(initialFolders);
+        
+        setUnweaveStats({ fileName: file.name, fileCount: parsedFiles.length });
+        setCurrentScreen("unweave_processing"); 
+    } catch (err) {
+        console.error("Failed to parse woven file:", err);
+        alert("Error parsing file. Ensure it is a valid Nexus Weaver output.");
+    } finally {
+        setIsScanning(false);
+    }
+  }, []);
+
+  // Обработчик скрытого инпута
+  const handleUnweaveSelect = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    await processUnweaveFile(file);
+    
+    if (e.target) e.target.value = '';
+  }, [processUnweaveFile]);
+
+  // Обработчик Drag & Drop
   const handleDrop = useCallback(async (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -545,6 +813,22 @@ const App = () => {
       return;
     }
 
+    // --- Режим распаковки ---
+    if (appMode === 'unweave') {
+      const item = e.dataTransfer.items[0];
+      if (item && item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file && file.name.toLowerCase().endsWith('.txt')) { // учитываем регистр
+          await processUnweaveFile(file);
+          return;
+        }
+      }
+
+      alert("Invalid file format. Please drop a valid Nexus Weaver .txt file to unpack.");
+      return;
+    }
+
+    // --- Режим упаковки ---
     setIsScanning(true);
     try {
       const files = await getDroppedFiles(e.dataTransfer.items);
@@ -553,7 +837,7 @@ const App = () => {
       console.error("Error processing dropped files:", error);
       setIsScanning(false);
     }
-  }, [handleFilesAdded]);
+  }, [appMode, handleFilesAdded, processUnweaveFile]);
 
   const handleInputChange = useCallback((e) => {
     const fileList = e.target.files;
@@ -620,7 +904,7 @@ const App = () => {
         if (isFolderClick && normalPaths.length > 0) {
             normalPaths.forEach(path => newSelectedPaths.add(path)); // Игнорируем тяжелые при массовом выделении
         } else {
-            selectablePathsToToggle.forEach(path => newSelectedPaths.add(path)); // Выделяем конкретный файл
+            selectablePathsToToggle.forEach(path => newSelectedPaths.add(path));
         }
     }
 
@@ -693,7 +977,11 @@ const App = () => {
             content = await file.text();
           }
 
-          mergedContent += `----\n${path}\n${content}\n`;
+          const safeContent = content
+            .replace(/^(\\*----)$/gm, '\\$1')
+            .replace(/^(\\*--END--)$/gm, '\\$1');
+
+          mergedContent += `----\n${path}\n${safeContent}\n`;
         } catch (error) {
           console.error(`Error processing file ${path}:`, error);
           mergedContent += `----\n${path}\n[Error: Could not read file content]\n`;
@@ -735,7 +1023,7 @@ const App = () => {
   
   const showTooltip = useCallback((content, e) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    setTooltip({ visible: true, content, x: rect.left + rect.width / 2, y: rect.bottom + window.scrollY + 8 });
+    setTooltip({ visible: true, content, x: rect.left + rect.width / 2, y: rect.bottom + 8 });
   }, []);
 
   const hideTooltip = useCallback(() => setTooltip(prev => ({ ...prev, visible: false })), []);
@@ -774,6 +1062,79 @@ const App = () => {
       return flat;
     }
   }, [fileTree, openFolders, searchQuery]);
+  
+  // Сворачивание, разворачивание папок в распаковщике
+  const handleToggleUnwovenFolder = useCallback((folderPath) => {
+    setUnwovenOpenFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(folderPath)) next.delete(folderPath);
+      else next.add(folderPath);
+      return next;
+    });
+  }, []);
+
+  // Массовое включение, отключение веток чекбоксов
+  const handleToggleUnwovenSelection = useCallback((item) => {
+    setUnwovenSelectedPaths(prev => {
+      const paths = getUnwovenDescendantFilePaths(item);
+      const nextSelected = new Set(prev);
+      const allSelected = paths.every(p => nextSelected.has(p));
+
+      if (allSelected) {
+        // Если выбраны все - отключаем их
+        paths.forEach(p => nextSelected.delete(p));
+      } else {
+        // Иначе - включаем их
+        paths.forEach(p => nextSelected.add(p));
+      }
+      return nextSelected;
+    });
+  }, []);
+
+  // Плоский список структуры для виртуального скролла
+  const flattenedUnwovenTree = useMemo(() => {
+    const flat = [];
+	
+	if (searchQuery) {
+      const allItems = [];
+      const flattenAll = (items) => {
+        items.forEach(item => {
+          allItems.push(item);
+          if (item.children) flattenAll(item.children);
+        });
+      };
+      flattenAll(unwovenFileTree);
+
+      const lowerQuery = searchQuery.toLowerCase();
+      return allItems
+        .filter(item => item.name.toLowerCase().includes(lowerQuery))
+        .map(item => ({ ...item, depth: 0 }));
+    }
+	
+    function flatten(items, depth) {
+      items.sort((a, b) => {
+        if (a.type === b.type) return a.name.localeCompare(b.name);
+        return a.type === 'folder' ? -1 : 1;
+      }).forEach(item => {
+        flat.push({ ...item, depth });
+        if (item.type === 'folder' && unwovenOpenFolders.has(item.path)) {
+          flatten(item.children || [], depth + 1);
+        }
+      });
+    }
+    flatten(unwovenFileTree, 0);
+    return flat;
+  }, [unwovenFileTree, unwovenOpenFolders]);
+
+  const unwovenTreeData = useMemo(() => ({
+    items: flattenedUnwovenTree,
+    selectedPaths: unwovenSelectedPaths,
+    handleToggleSelection: handleToggleUnwovenSelection,
+    handleToggleFolder: handleToggleUnwovenFolder,
+    openFolders: unwovenOpenFolders,
+    icons,
+	isSearching: !!searchQuery
+  }), [flattenedUnwovenTree, unwovenSelectedPaths, handleToggleUnwovenSelection, handleToggleUnwovenFolder, unwovenOpenFolders, searchQuery]);
 
   const fileTreeData = useMemo(() => ({
     items: flattenedTree,
@@ -802,34 +1163,9 @@ const App = () => {
 		return resultLines.join('\n').length;
 	}, [resultLines]);
 	
-	const TokenCounter = ({ charCount }) => {
-		const tokenCount = Math.round(charCount / 4);
-		const isDanger = tokenCount > 250000;
-		const tooltipText = "Token count is very high. Models may struggle to read this.";
-		return (
-		  <div className={`flex items-center space-x-2 text-sm ${isDanger ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'}`}>
-			<span className={isDanger ? 'font-bold' : ''}>
-			  {tokenCount.toLocaleString('en-US')} tokens
-			</span>
-			<span className="text-xs">
-			  (~{charCount.toLocaleString('en-US')} chars)
-			</span>
-			{isDanger && (
-			  <div 
-				onMouseEnter={(e) => showTooltip(tooltipText, e)} 
-				onMouseLeave={hideTooltip}
-				className="cursor-help"
-			  >
-				{icons.info}
-			  </div>
-			)}
-		  </div>
-		);
-	};
-	
 	return (
     <div className={`min-h-screen transition-colors duration-300 ${darkMode ? 'bg-gray-900 text-gray-100' : 'bg-gray-50 text-gray-800'}`}>
-      {isAboutModalOpen && <AboutModal onClose={closeAboutModal} />}
+      {isAboutModalOpen && <AboutModal onClose={closeAboutModal} darkMode={darkMode} />}
       {tooltip.visible && <Tooltip content={tooltip.content} x={tooltip.x} y={tooltip.y} />}
 
       <header className={`px-6 py-4 flex justify-between items-center ${darkMode ? 'text-white' : 'text-gray-900'}`}>
@@ -848,10 +1184,26 @@ const App = () => {
 
 		<input type="file" ref={folderInputRef} onChange={handleInputChange} multiple webkitdirectory="" directory="" className="hidden"/>
 		<input type="file" ref={fileInputRef} onChange={handleInputChange} multiple className="hidden"/>
+		<input type="file" ref={unweaveFileInputRef} onChange={handleUnweaveSelect} accept=".txt" className="hidden"/>
 		<main className="container mx-auto px-6 py-8 max-w-7xl">
         {currentScreen === "upload" && (
           <div className="flex flex-col items-center justify-center min-h-[75vh]">
             
+            <div className={`mb-8 p-1 rounded-2xl flex space-x-1 shadow-sm transition-colors duration-300 ${darkMode ? 'bg-gray-800/60 backdrop-blur-md border border-gray-700/50' : 'bg-gray-200/60 backdrop-blur-md border border-gray-300/50'}`}>
+              <button
+                onClick={() => setAppMode('weave')}
+                className={`px-8 py-2.5 rounded-xl text-sm font-semibold transition-all duration-300 ${appMode === 'weave' ? (darkMode ? 'bg-gray-700 text-white shadow-md' : 'bg-white text-gray-900 shadow-md') : (darkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700')}`}
+              >
+                Weave (Pack)
+              </button>
+              <button
+                onClick={() => setAppMode('unweave')}
+                className={`px-8 py-2.5 rounded-xl text-sm font-semibold transition-all duration-300 ${appMode === 'unweave' ? (darkMode ? 'bg-gray-700 text-white shadow-md' : 'bg-white text-gray-900 shadow-md') : (darkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700')}`}
+              >
+                Unweave (Unpack)
+              </button>
+            </div>
+
             {isScanning ? (
               <div className="flex flex-col items-center justify-center p-16 text-center text-gray-500 dark:text-gray-400">
                 <div className="animate-spin mb-4 text-blue-500">
@@ -865,35 +1217,61 @@ const App = () => {
                 <p>Please wait, this may take a moment for large folders.</p>
               </div>
             ) : (
+              
               <div
-                className={`w-full max-w-3xl border-2 border-dashed rounded-2xl p-16 text-center transition-all duration-300 ${isDragging ? 'border-blue-500 bg-blue-500/10' : (darkMode ? 'border-gray-600' : 'border-gray-300')}`}
+                className={`w-full max-w-3xl border-2 border-dashed rounded-[2rem] p-16 text-center transition-all duration-300 ${isDragging ? 'border-blue-500 bg-blue-500/10' : (darkMode ? 'border-gray-700 bg-gray-800/30' : 'border-gray-300 bg-white/50')} backdrop-blur-sm`}
                 onDragEnter={handleDragEnter}
                 onDragLeave={handleDragLeave}
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
               >
-                <svg className="w-16 h-16 mx-auto mb-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-                </svg>
-                <h2 className={`text-2xl font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Drop your project folder or files here</h2>
-                <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} mt-4`}>or</p>
-                <div className="mt-6 flex justify-center items-center space-x-4">
-                  <button
-                    onClick={() => folderInputRef.current?.click()}
-                    className={`font-semibold py-2 px-4 rounded-lg transition-colors ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-gray-200 hover:bg-gray-300 text-gray-800'}`}
-                  >
-                    Select Folder
-                  </button>
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`font-semibold py-2 px-4 rounded-lg transition-colors ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-gray-200 hover:bg-gray-300 text-gray-800'}`}
-                  >
-                    Select Files
-                  </button>
-                </div>
+                {appMode === 'weave' ? (
+                  // --- UI РЕЖИМА УПАКОВКИ ---
+                  <div className="animate-in fade-in zoom-in-95 duration-300">
+                    <svg className="w-16 h-16 mx-auto mb-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                    </svg>
+                    <h2 className={`text-3xl font-bold tracking-tight mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Drop your project here</h2>
+                    <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} mt-2`}>Drag and drop folders or files to begin weaving.</p>
+                    
+                    <div className="mt-8 flex justify-center items-center space-x-4">
+                      <button
+                        onClick={() => folderInputRef.current?.click()}
+                        className={`font-semibold py-3 px-6 rounded-2xl shadow-sm transition-all duration-200 active:scale-95 ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-white hover:bg-gray-50 text-gray-800'}`}
+                      >
+                        Select Folder
+                      </button>
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className={`font-semibold py-3 px-6 rounded-2xl shadow-sm transition-all duration-200 active:scale-95 ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-white hover:bg-gray-50 text-gray-800'}`}
+                      >
+                        Select Files
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  // --- UI РЕЖИМА РАСПАКОВКИ ---
+                  <div className="animate-in fade-in zoom-in-95 duration-300">
+                    <div className={`w-20 h-20 mx-auto mb-6 rounded-3xl flex items-center justify-center ${darkMode ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
+                      <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m3.75 9v6m3-3H9m1.5-12H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                      </svg>
+                    </div>
+                    <h2 className={`text-3xl font-bold tracking-tight mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Unpack your Woven Project</h2>
+                    <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} mt-2 text-base max-w-md mx-auto`}>Drop your <span className="font-mono text-sm bg-gray-500/10 px-1 rounded">.txt</span> file generated by Nexus Weaver to restore it back into a directory structure.</p>
+                    
+                    <div className="mt-8 flex justify-center items-center">
+                      <button
+                        onClick={() => unweaveFileInputRef.current?.click()}
+                        className={`font-semibold py-3 px-8 rounded-2xl shadow-lg transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 bg-blue-600 hover:bg-blue-500 text-white`}
+                      >
+                        Select .txt File
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
-			
           </div> 
         )}
 
@@ -956,7 +1334,7 @@ const App = () => {
               <div className="text-center w-full max-w-sm">
                 <h2 className={`text-2xl font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Ready to Weave</h2>
                 <p className="mb-6 text-gray-500">{selectedPaths.size} files selected</p>
-                <div className="mb-6 -mt-2 flex justify-center"><TokenCounter charCount={processingCharCount} /></div>
+                <div className="mb-6 -mt-2 flex justify-center"><TokenCounter charCount={processingCharCount} showTooltip={showTooltip} hideTooltip={hideTooltip} icons={icons} /></div>
                 {isProcessing ? (
                   <div className="space-y-3">
                     <div className="flex justify-between text-sm"><span className={`truncate pr-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`} title={currentProcessingFile}>Processing: {currentProcessingFile}</span><span className={darkMode ? 'text-gray-400' : 'text-gray-500'}>{Math.round(processingProgress)}%</span></div>
@@ -973,7 +1351,7 @@ const App = () => {
         {currentScreen === "result" && (
 		<div className="h-[75vh] flex flex-col rounded-2xl overflow-hidden">
 		  <div className={`p-3 border-b flex justify-between items-center space-x-2 flex-shrink-0 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-gray-100 border-gray-200'}`}>
-			<TokenCounter charCount={resultCharCount} />
+			<TokenCounter charCount={resultCharCount} showTooltip={showTooltip} hideTooltip={hideTooltip} icons={icons} />
 			<div className="flex space-x-2">
 			  <button onClick={() => setCurrentScreen('processing')} className={`px-3 py-1 text-sm font-medium rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-200 hover:bg-gray-300'}`}>Back to Files</button>
 			  <button onClick={copyToClipboard} disabled={isCopied} className={`p-2 rounded-lg shadow transition-all duration-200 ${isCopied ? (darkMode ? 'bg-green-800 text-green-300' : 'bg-green-100 text-green-600') : (darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-white hover:bg-gray-100 text-gray-700')}`} title={isCopied ? "Copied!" : "Copy to clipboard"}>{isCopied ? icons.check : icons.copy}</button>
@@ -998,6 +1376,88 @@ const App = () => {
 		  </div>
 		</div>
 	  )}
+	  
+	  {currentScreen === "unweave_processing" && (
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 h-[75vh] animate-in fade-in zoom-in-95 duration-300">
+            
+            {/* Левая колонка: Интерактивное дерево файлов */}
+            <div className={`lg:col-span-2 rounded-2xl p-4 flex flex-col ${darkMode ? 'bg-gray-800/50' : 'bg-white/80'}`}>
+              <div className={`flex items-center justify-between mb-4 pb-2 border-b flex-shrink-0 ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                <h2 className={`font-semibold truncate ${darkMode ? 'text-white' : 'text-gray-900'}`} title={unweaveStats.fileName}>
+                  Source: {unweaveStats.fileName}
+                </h2>
+                <div className="flex space-x-2 flex-shrink-0">
+                  <button 
+                    onClick={() => setUnwovenSelectedPaths(new Set(unwovenFiles.map(f => f.path)))} 
+                    className={`text-xs font-medium ${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-800'}`}
+                  >
+                    Select All
+                  </button>
+                  <button 
+                    onClick={() => setUnwovenSelectedPaths(new Set())} 
+                    className={`text-xs font-medium ${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-800'}`}
+                  >
+                    Deselect All
+                  </button>
+                </div>
+              </div>
+
+              {/* Виртуализированный список структуры папок */}
+              <div className="flex-grow min-h-0 w-full">
+                <AutoSizer>
+                  {({ height, width }) => (
+                    <List 
+                        height={height} 
+                        itemCount={flattenedUnwovenTree.length} 
+                        itemSize={32} 
+                        width={width} 
+                        itemData={unwovenTreeData}
+                    >
+                      {UnwovenFileTreeRow}
+                    </List>
+                  )}
+                </AutoSizer>
+              </div>
+            </div>
+
+            {/* Правая колонка: Управление экспортом в ZIP */}
+            <div className={`lg:col-span-3 rounded-2xl p-6 flex flex-col justify-center items-center ${darkMode ? 'bg-gray-800/50' : 'bg-white/80'}`}>
+              <div className="text-center w-full max-w-sm">
+                <div className={`w-20 h-20 mx-auto mb-6 rounded-full flex items-center justify-center ${darkMode ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
+                  <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                
+                <h2 className={`text-2xl font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Ready to Unpack</h2>
+                <p className="mb-6 text-gray-500">
+                  <strong className={darkMode ? 'text-gray-200' : 'text-gray-700'}>{unwovenSelectedPaths.size}</strong> of {unwovenFiles.length} files selected
+                </p>
+                
+                <div className="flex flex-col space-y-3">
+                  <button 
+                    onClick={handleDownloadZip} 
+                    disabled={unwovenSelectedPaths.size === 0}
+                    className={`w-full py-4 px-6 rounded-2xl font-semibold text-white shadow-lg transition-transform transform hover:scale-105 active:scale-95 ${unwovenSelectedPaths.size === 0 ? 'bg-gray-400 cursor-not-allowed hover:scale-100 shadow-none' : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700'}`}
+                  >
+                    Download .zip
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCurrentScreen("upload");
+                      setUnwovenFiles([]);
+                      setUnwovenFileTree([]);
+                    }}
+                    className={`w-full py-3 px-6 rounded-2xl font-medium transition-colors active:scale-95 ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`}
+                  >
+                    Change Source File
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        )}
 	</main>
 
       <footer className={`px-6 py-4 text-center text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
