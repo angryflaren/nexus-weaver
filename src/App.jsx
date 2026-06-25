@@ -26,49 +26,66 @@ const documentExtensions = new Set(['pdf', 'doc', 'docx', 'docm', 'dot', 'dotx',
 
 const parseWovenText = (text) => {
     const files = [];
-    const lines = text.split('\n');
-    let i = 0;
-    
-    while (i < lines.length) {
-        if (lines[i].trim() === '----') {
-            i++;
-            if (i >= lines.length || lines[i].trim() === '--END--') break;
-            
-            const path = lines[i].trim();
-            i++;
-            
-            const contentLines = [];
-            while (i < lines.length && lines[i].trim() !== '----' && lines[i].trim() !== '--END--') {
-                contentLines.push(lines[i]);
-                i++;
-            }
-            
-            const rawContent = contentLines.join('\n');
-            
-            // снимаем защитное экранирование
-            const content = rawContent
-                .replace(/^\\(\\*----)$/gm, '$1')
-                .replace(/^\\(\\*--END--)$/gm, '$1');
-                
-            let fileObj = { path, textContent: content, isBinary: false };
-			
-            // проверяем, закодирован ли файл как Base64 (картинки или документы)
-            const isImage = content.startsWith('[IMAGE_DATA: data:');
-            const isDoc = content.startsWith('[DOCUMENT_DATA: data:');
-            if ((isImage || isDoc) && content.endsWith(']')) {
-                fileObj.isBinary = true;
-                const prefixLen = isImage ? '[IMAGE_DATA: '.length : '[DOCUMENT_DATA: '.length;
-                fileObj.dataUrl = content.slice(prefixLen, -1).trim();
-            }
 
-            files.push(fileObj);
-        } else if (lines[i].trim() === '--END--') {
-            break;
-        } else {
-            i++;
-        }
-    }
+    // Ищем тег строго после переноса строки (чтобы проигнорировать его упоминания в текстовой шапке-инструкции)
+    let startIndex = text.indexOf('\n<NW_PROJECT>');
     
+    if (startIndex !== -1) {
+        startIndex += 1; // чтобы пропустить сам '\n'
+    } else if (text.startsWith('<NW_PROJECT>')) {
+        startIndex = 0; // Фолбэк на случай, если шапки нет и файл начинается сразу с тега
+    }
+
+    const endIndex = text.lastIndexOf('</NW_PROJECT>');
+    
+    if (startIndex === -1 || endIndex === -1) {
+        return files;
+    }
+   
+    const projectContent = text.substring(startIndex + 12, endIndex); // Вырезаем контент
+
+    const fileRegex = /<NW_FILE\b[^>]*\bpath="([^"]+)"[^>]*>([\s\S]*?)<\/NW_FILE>/g;
+
+    let match;
+
+    while ((match = fileRegex.exec(projectContent)) !== null) {
+        const path = match[1].replace(/&quot;/g, '"');
+        let content = match[2];
+        
+        content = content.replace(/&lt;(\/?NW_PROJECT|\/?NW_FILE)/g, '<$1');
+
+        // убираем перевод строки после открывающего тега
+        if (content.startsWith('\n')) {
+            content = content.slice(1);
+        }
+
+        // убираем перевод строки перед закрывающим тегом
+        if (content.endsWith('\n')) {
+            content = content.slice(0, -1);
+        }
+
+        const fileObj = {
+            path,
+            textContent: content,
+            isBinary: false
+        };
+
+        const isImage = content.startsWith('[IMAGE_DATA: data:');
+        const isDoc = content.startsWith('[DOCUMENT_DATA: data:');
+
+        if ((isImage || isDoc) && content.endsWith(']')) {
+            fileObj.isBinary = true;
+
+            const prefixLen = isImage
+                ? '[IMAGE_DATA: '.length
+                : '[DOCUMENT_DATA: '.length;
+
+            fileObj.dataUrl = content.slice(prefixLen, -1).trim();
+        }
+
+        files.push(fileObj);
+    }
+
     return files;
 };
 
@@ -436,6 +453,47 @@ const TokenCounter = memo(({ charCount, showTooltip, hideTooltip, icons }) => {
     );
 });
 
+const flattenTree = (tree, openFolders, searchQuery) => {
+  const flat = [];
+
+  if (searchQuery) {
+    const allItems = [];
+
+    const flattenAll = (items) => {
+      items.forEach(item => {
+        allItems.push(item);
+        if (item.children) flattenAll(item.children);
+      });
+    };
+
+    flattenAll(tree);
+
+    const lowerQuery = searchQuery.toLowerCase();
+
+    return allItems
+      .filter(item => item.name.toLowerCase().includes(lowerQuery))
+      .map(item => ({ ...item, depth: 0 }));
+  }
+
+  function flatten(items, depth) {
+    items
+      .sort((a, b) => {
+        if (a.type === b.type) return a.name.localeCompare(b.name);
+        return a.type === 'folder' ? -1 : 1;
+      })
+      .forEach(item => {
+        flat.push({ ...item, depth });
+
+        if (item.type === 'folder' && openFolders.has(item.path)) {
+          flatten(item.children || [], depth + 1);
+        }
+      });
+  }
+
+  flatten(tree, 0);
+
+  return flat;
+};
 
 // --- ОСНОВНОЙ КОМПОНЕНТ ПРИЛОЖЕНИЯ ---
 const App = () => {
@@ -818,13 +876,17 @@ const App = () => {
       const item = e.dataTransfer.items[0];
       if (item && item.kind === 'file') {
         const file = item.getAsFile();
-        if (file && file.name.toLowerCase().endsWith('.txt')) { // учитываем регистр
-          await processUnweaveFile(file);
-          return;
-        }
+        if (file) {
+			// Читаем первые 500 байт файла для проверки сигнатуры
+			const header = await file.slice(0, 5000).text();
+			if (header.includes('<NW_PROJECT>')) {
+				await processUnweaveFile(file);
+				return;
+			}
+		}
       }
 
-      alert("Invalid file format. Please drop a valid Nexus Weaver .txt file to unpack.");
+      alert("Invalid format. Please drop a valid file containing a <NW_PROJECT> signature to unpack.");
       return;
     }
 
@@ -949,8 +1011,18 @@ const App = () => {
     const filesToProcess = Array.from(selectedPaths).sort();
     const totalFiles = filesToProcess.length;
 
-    let mergedContent = `# The following text is a representation of a project's directory structure and file contents.\n# Parsing Rules:\n# 1. File Separator: A line containing only '----'.\n# 2. File Path: The line immediately following the separator, indicating the file's full relative path.\n# 3. File Content: The text block following the path line.\n# 4. Terminator: The text stream concludes with a line containing only '--END--'.\n\n`;
+    let mergedContent = `# The following text is a representation of a project's directory structure and file contents. 
+# Parsing Rules:
+# 1. The entire export is wrapped in <NW_PROJECT>.
+# 2. Each file is wrapped in <NW_FILE path="...">.
+# 3. File content is stored verbatim inside the corresponding tag.
+# 4. The export ends with </NW_PROJECT>.
 
+<NW_PROJECT>
+`;
+	
+	
+	
     for (let i = 0; i < totalFiles; i++) {
       const path = filesToProcess[i];
       const file = allFiles.get(path);
@@ -960,7 +1032,7 @@ const App = () => {
         try {
           // ограничение на файл 100 MB
           if (file.size > 100 * 1024 * 1024) {
-             mergedContent += `----\n${path}\n[Error: File size exceeds the 100MB limit to prevent browser crash]\n`;
+			 mergedContent += `<NW_FILE path="${path}">[Error: File size exceeds the 100MB limit to prevent browser crash]</NW_FILE>\n`;
              continue;
           }
           
@@ -973,18 +1045,17 @@ const App = () => {
           } else if (documentExtensions.has(fileExtension)) {
             const dataUrl = await readFileAsDataURL(file);
             content = `[DOCUMENT_DATA: ${dataUrl}]`;
+			
+			content = content.replace(/<(\/?NW_PROJECT|\/?NW_FILE)/g, '&lt;$1');
           } else {
             content = await file.text();
           }
 
-          const safeContent = content
-            .replace(/^(\\*----)$/gm, '\\$1')
-            .replace(/^(\\*--END--)$/gm, '\\$1');
-
-          mergedContent += `----\n${path}\n${safeContent}\n`;
+          const safePath = path.replace(/"/g, '&quot;');
+		  mergedContent += `<NW_FILE path="${safePath}">\n${content}\n</NW_FILE>\n`;
         } catch (error) {
           console.error(`Error processing file ${path}:`, error);
-          mergedContent += `----\n${path}\n[Error: Could not read file content]\n`;
+		  mergedContent += `<NW_FILE path="${path}">[Error: Could not read file content]</NW_FILE>\n`;
         }
       }
       
@@ -994,7 +1065,7 @@ const App = () => {
       }
     }
     
-    mergedContent += '--END--';
+    mergedContent += '\n</NW_PROJECT>';
     setResultLines(mergedContent.split('\n'));
     setIsProcessing(false);
     setCurrentScreen("result");
@@ -1028,40 +1099,9 @@ const App = () => {
 
   const hideTooltip = useCallback(() => setTooltip(prev => ({ ...prev, visible: false })), []);
   
-  const flattenedTree = useMemo(() => {
-    const flat = [];
-
-    if (searchQuery) {
-      const allItems = [];
-      const flattenAll = (items) => {
-        items.forEach(item => {
-          allItems.push(item);
-          if (item.children) flattenAll(item.children);
-        });
-      };
-      flattenAll(fileTree);
-
-      const lowerQuery = searchQuery.toLowerCase();
-      return allItems
-        .filter(item => item.name.toLowerCase().includes(lowerQuery))
-        .map(item => ({ ...item, depth: 0 }));
-
-    } else {
-      function flatten(items, depth) {
-        items.sort((a, b) => {
-          if (a.type === b.type) return a.name.localeCompare(b.name);
-          return a.type === 'folder' ? -1 : 1;
-        }).forEach(item => {
-          flat.push({ ...item, depth });
-          if (item.type === 'folder' && openFolders.has(item.path)) {
-            flatten(item.children || [], depth + 1);
-          }
-        });
-      }
-      flatten(fileTree, 0);
-      return flat;
-    }
-  }, [fileTree, openFolders, searchQuery]);
+  const flattenedTree = useMemo(() =>
+	flattenTree(fileTree, openFolders, searchQuery),
+	[fileTree, openFolders, searchQuery]);
   
   // Сворачивание, разворачивание папок в распаковщике
   const handleToggleUnwovenFolder = useCallback((folderPath) => {
@@ -1092,39 +1132,9 @@ const App = () => {
   }, []);
 
   // Плоский список структуры для виртуального скролла
-  const flattenedUnwovenTree = useMemo(() => {
-    const flat = [];
-	
-	if (searchQuery) {
-      const allItems = [];
-      const flattenAll = (items) => {
-        items.forEach(item => {
-          allItems.push(item);
-          if (item.children) flattenAll(item.children);
-        });
-      };
-      flattenAll(unwovenFileTree);
-
-      const lowerQuery = searchQuery.toLowerCase();
-      return allItems
-        .filter(item => item.name.toLowerCase().includes(lowerQuery))
-        .map(item => ({ ...item, depth: 0 }));
-    }
-	
-    function flatten(items, depth) {
-      items.sort((a, b) => {
-        if (a.type === b.type) return a.name.localeCompare(b.name);
-        return a.type === 'folder' ? -1 : 1;
-      }).forEach(item => {
-        flat.push({ ...item, depth });
-        if (item.type === 'folder' && unwovenOpenFolders.has(item.path)) {
-          flatten(item.children || [], depth + 1);
-        }
-      });
-    }
-    flatten(unwovenFileTree, 0);
-    return flat;
-  }, [unwovenFileTree, unwovenOpenFolders]);
+  const flattenedUnwovenTree = useMemo(() =>
+	flattenTree(unwovenFileTree, unwovenOpenFolders, searchQuery),
+	[unwovenFileTree, unwovenOpenFolders, searchQuery]);
 
   const unwovenTreeData = useMemo(() => ({
     items: flattenedUnwovenTree,
@@ -1184,7 +1194,7 @@ const App = () => {
 
 		<input type="file" ref={folderInputRef} onChange={handleInputChange} multiple webkitdirectory="" directory="" className="hidden"/>
 		<input type="file" ref={fileInputRef} onChange={handleInputChange} multiple className="hidden"/>
-		<input type="file" ref={unweaveFileInputRef} onChange={handleUnweaveSelect} accept=".txt" className="hidden"/>
+		<input type="file" ref={unweaveFileInputRef} onChange={handleUnweaveSelect} className="hidden"/>
 		<main className="container mx-auto px-6 py-8 max-w-7xl">
         {currentScreen === "upload" && (
           <div className="flex flex-col items-center justify-center min-h-[75vh]">
@@ -1258,14 +1268,14 @@ const App = () => {
                       </svg>
                     </div>
                     <h2 className={`text-3xl font-bold tracking-tight mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Unpack your Woven Project</h2>
-                    <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} mt-2 text-base max-w-md mx-auto`}>Drop your <span className="font-mono text-sm bg-gray-500/10 px-1 rounded">.txt</span> file generated by Nexus Weaver to restore it back into a directory structure.</p>
+                    <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} mt-2 text-base max-w-md mx-auto`}>Drop your <span className="font-mono text-sm bg-gray-500/10 px-1 rounded">.txt (or other)</span> file generated by Nexus Weaver to restore it back into a directory structure.</p>
                     
                     <div className="mt-8 flex justify-center items-center">
                       <button
                         onClick={() => unweaveFileInputRef.current?.click()}
                         className={`font-semibold py-3 px-8 rounded-2xl shadow-lg transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 bg-blue-600 hover:bg-blue-500 text-white`}
                       >
-                        Select .txt File
+                        Select Woven File
                       </button>
                     </div>
                   </div>
