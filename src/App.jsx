@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import JSZip from 'jszip';
+import { fetchGithubRepoAsFiles } from './services/githubService.js';
 
 import defaultIgnoredFiles from './config/ignoreList.js';
 import ignoredFolderNames from './config/ignoreFolders.js';
@@ -27,43 +28,67 @@ const documentExtensions = new Set(['pdf', 'doc', 'docx', 'docm', 'dot', 'dotx',
 const parseWovenText = (text) => {
     const files = [];
 
-    // Ищем тег строго после переноса строки (чтобы проигнорировать его упоминания в текстовой шапке-инструкции)
     let startIndex = text.indexOf('\n<NW_PROJECT>');
-    
     if (startIndex !== -1) {
-        startIndex += 1; // чтобы пропустить сам '\n'
+        startIndex += 1; // пропускаем  '\n'
     } else if (text.startsWith('<NW_PROJECT>')) {
-        startIndex = 0; // Фолбэк на случай, если шапки нет и файл начинается сразу с тега
+        startIndex = 0; // Фолбэк
     }
 
     const endIndex = text.lastIndexOf('</NW_PROJECT>');
-    
     if (startIndex === -1 || endIndex === -1) {
-        return files;
+        return files; // Невалидный файл
     }
-   
-    const projectContent = text.substring(startIndex + 12, endIndex); // Вырезаем контент
 
-    const fileRegex = /<NW_FILE\b[^>]*\bpath="([^"]+)"[^>]*>([\s\S]*?)<\/NW_FILE>/g;
+    const projectContent = text.substring(startIndex + 12, endIndex);
 
-    let match;
+    let currentPos = 0;
 
-    while ((match = fileRegex.exec(projectContent)) !== null) {
-        const path = match[1].replace(/&quot;/g, '"');
-        let content = match[2];
+    while (true) {
+        // 1. Ищем начало тега файла
+        const startTagIndex = projectContent.indexOf('<NW_FILE', currentPos);
+        if (startTagIndex === -1) break; // Файлы закончились
+
+        // 2. Ищем конец открывающего тега '>'
+        const endOfStartTagIndex = projectContent.indexOf('>', startTagIndex);
+        if (endOfStartTagIndex === -1) {
+            console.warn("Nexus Weaver: Found unclosed <NW_FILE tag. Stopping parse to prevent infinite loop.");
+            break; // Структура повреждена, прерываем для безопасности
+        }
+
+        // 3. Безопасно извлекаем path.
+        const tagString = projectContent.substring(startTagIndex, endOfStartTagIndex);
+        const pathMatch = tagString.match(/path="([^"]+)"/);
         
+        if (!pathMatch) {
+            // Тег поврежден (нет пути), перепрыгиваем его и ищем следующий
+            currentPos = endOfStartTagIndex + 1;
+            continue; 
+        }
+        
+        const path = pathMatch[1].replace(/&quot;/g, '"');
+
+        // 4. Ищем закрывающий тег
+        const closeTagIndex = projectContent.indexOf('</NW_FILE>', endOfStartTagIndex);
+        if (closeTagIndex === -1) {
+             console.warn(`Nexus Weaver: Missing </NW_FILE> for ${path}.`);
+             break; // Файл не закрыт, прерываем
+        }
+
+        // 5. Молниеносно извлекаем содержимое файла
+        let content = projectContent.substring(endOfStartTagIndex + 1, closeTagIndex);
+
+        // 6. Сдвигаем курсор для поиска следующего файла
+        currentPos = closeTagIndex + 10; // 10 — это длина строки '</NW_FILE>'
+
+        // 7. Восстанавливаем оригинальные теги (декодирование)
         content = content.replace(/&lt;(\/?NW_PROJECT|\/?NW_FILE)/g, '<$1');
 
-        // убираем перевод строки после открывающего тега
-        if (content.startsWith('\n')) {
-            content = content.slice(1);
-        }
+        // 8. Убираем технические переносы строк от форматирования
+        if (content.startsWith('\n')) content = content.slice(1);
+        if (content.endsWith('\n')) content = content.slice(0, -1);
 
-        // убираем перевод строки перед закрывающим тегом
-        if (content.endsWith('\n')) {
-            content = content.slice(0, -1);
-        }
-
+        // 9. Формируем объект файла
         const fileObj = {
             path,
             textContent: content,
@@ -72,14 +97,10 @@ const parseWovenText = (text) => {
 
         const isImage = content.startsWith('[IMAGE_DATA: data:');
         const isDoc = content.startsWith('[DOCUMENT_DATA: data:');
-
+        
         if ((isImage || isDoc) && content.endsWith(']')) {
             fileObj.isBinary = true;
-
-            const prefixLen = isImage
-                ? '[IMAGE_DATA: '.length
-                : '[DOCUMENT_DATA: '.length;
-
+            const prefixLen = isImage ? '[IMAGE_DATA: '.length : '[DOCUMENT_DATA: '.length;
             fileObj.dataUrl = content.slice(prefixLen, -1).trim();
         }
 
@@ -526,6 +547,10 @@ const App = () => {
   const [unweaveStats, setUnweaveStats] = useState({ fileName: '', fileCount: 0 });
   const unweaveFileInputRef = useRef(null);
   
+  const [githubUrl, setGithubUrl] = useState("");
+  const [isGithubLoading, setIsGithubLoading] = useState(false);
+  const [showGithubInput, setShowGithubInput] = useState(false);
+  
   const folderInputRef = useRef(null);
   const fileInputRef = useRef(null);
   
@@ -918,6 +943,23 @@ const App = () => {
         await handleFilesAdded(files);
     }, 50);
   }, [handleFilesAdded]);
+  
+  const handleGithubImport = useCallback(async () => {
+    if (!githubUrl) return;
+    setIsScanning(true);
+    setIsGithubLoading(true);
+    try {
+        const files = await fetchGithubRepoAsFiles(githubUrl);
+        await handleFilesAdded(files);
+        setGithubUrl(""); // очищаем после успеха
+    } catch (error) {
+        console.error("GitHub import failed:", error);
+        alert(`Failed to import from GitHub: ${error.message}`);
+    } finally {
+        setIsScanning(false);
+        setIsGithubLoading(false);
+    }
+  }, [githubUrl, handleFilesAdded]);
 
   const handleToggleFolder = useCallback((folderPath) => {
     setOpenFolders(prev => {
@@ -1011,18 +1053,18 @@ const App = () => {
     const filesToProcess = Array.from(selectedPaths).sort();
     const totalFiles = filesToProcess.length;
 
-    let mergedContent = `# The following text is a representation of a project's directory structure and file contents. 
-# Parsing Rules:
-# 1. The entire export is wrapped in <NW_PROJECT>.
-# 2. Each file is wrapped in <NW_FILE path="...">.
-# 3. File content is stored verbatim inside the corresponding tag.
-# 4. The export ends with </NW_PROJECT>.
-
-<NW_PROJECT>
-`;
-	
-	
-	
+    // ОПТИМИЗАЦИЯ: Используем массив строк вместо гигантской конкатенируемой строки
+    const newResultLines = [
+      "# The following text is a representation of a project's directory structure and file contents.",
+      "# Parsing Rules:",
+      "# 1. The entire export is wrapped in <NW_PROJECT>.",
+      "# 2. Each file is wrapped in <NW_FILE path=\"...\">.",
+      "# 3. File content is stored verbatim inside the corresponding tag.",
+      "# 4. The export ends with </NW_PROJECT>.",
+      "",
+      "<NW_PROJECT>"
+    ];
+    
     for (let i = 0; i < totalFiles; i++) {
       const path = filesToProcess[i];
       const file = allFiles.get(path);
@@ -1030,43 +1072,52 @@ const App = () => {
 
       if (file) {
         try {
-          // ограничение на файл 100 MB
+          // Ограничение на файл 100 MB
           if (file.size > 100 * 1024 * 1024) {
-			 mergedContent += `<NW_FILE path="${path}">[Error: File size exceeds the 100MB limit to prevent browser crash]</NW_FILE>\n`;
+             newResultLines.push(`<NW_FILE path="${path}">[Error: File size exceeds the 100MB limit to prevent browser crash]</NW_FILE>`);
              continue;
           }
           
           const fileExtension = path.split('.').pop().toLowerCase();
-          let content;
+          const safePath = path.replace(/"/g, '&quot;');
+          
+          newResultLines.push(`<NW_FILE path="${safePath}">`);
 
           if (imageExtensions.has(fileExtension)) {
             const dataUrl = await readFileAsDataURL(file);
-            content = `[IMAGE_DATA: ${dataUrl}]`;
+            newResultLines.push(`[IMAGE_DATA: ${dataUrl}]`);
           } else if (documentExtensions.has(fileExtension)) {
             const dataUrl = await readFileAsDataURL(file);
-            content = `[DOCUMENT_DATA: ${dataUrl}]`;
-			
-			content = content.replace(/<(\/?NW_PROJECT|\/?NW_FILE)/g, '&lt;$1');
+            const content = `[DOCUMENT_DATA: ${dataUrl}]`.replace(/<(\/?NW_PROJECT|\/?NW_FILE)/g, '&lt;$1');
+            newResultLines.push(content);
           } else {
-            content = await file.text();
+            const content = await file.text();
+			
+			const sanitizedContent = content.replace(/<(\/?NW_PROJECT|\/?NW_FILE)/g, '&lt;$1');
+            const contentLines = sanitizedContent.split('\n');
+            for (let j = 0; j < contentLines.length; j++) {
+                newResultLines.push(contentLines[j]);
+            }
           }
 
-          const safePath = path.replace(/"/g, '&quot;');
-		  mergedContent += `<NW_FILE path="${safePath}">\n${content}\n</NW_FILE>\n`;
+          newResultLines.push(`</NW_FILE>`);
         } catch (error) {
           console.error(`Error processing file ${path}:`, error);
-		  mergedContent += `<NW_FILE path="${path}">[Error: Could not read file content]</NW_FILE>\n`;
+          newResultLines.push(`<NW_FILE path="${path}">[Error: Could not read file content]</NW_FILE>`);
         }
       }
       
       setProcessingProgress(((i + 1) / totalFiles) * 100);
+      
+      // Даем браузеру "передохнуть" (разблокируем UI-поток)
       if (i % 10 === 0) {
         await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
     
-    mergedContent += '\n</NW_PROJECT>';
-    setResultLines(mergedContent.split('\n'));
+    newResultLines.push('</NW_PROJECT>');
+    
+    setResultLines(newResultLines);
     setIsProcessing(false);
     setCurrentScreen("result");
   }, [fileTree, selectedPaths]);
@@ -1083,11 +1134,19 @@ const App = () => {
 
   const downloadDocument = useCallback(() => {
     if(resultLines.length === 0) return;
-    const blob = new Blob([resultLines.join('\n')], { type: 'text/plain' });
+    
+    const blobParts = resultLines.map((line, index) => index === resultLines.length - 1 ? line : line + '\n');
+    const blob = new Blob(blobParts, { type: 'text/plain' });
+    
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'nexus-weaver-output.txt';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-	URL.revokeObjectURL(url);
+    const a = document.createElement('a'); 
+    a.href = url; 
+    a.download = 'nexus-weaver-output.txt';
+    
+    document.body.appendChild(a); 
+    a.click(); 
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }, [resultLines]);
   
   const toggleDarkMode = useCallback(() => setDarkMode(d => !d), []);
@@ -1170,8 +1229,8 @@ const App = () => {
 	
 	const resultCharCount = useMemo(() => {
 		if (resultLines.length === 0) return 0;
-		return resultLines.join('\n').length;
-	}, [resultLines]);
+		return resultLines.reduce((acc, line) => acc + line.length, 0) + (resultLines.length - 1);
+	  }, [resultLines]);
 	
 	return (
     <div className={`min-h-screen transition-colors duration-300 ${darkMode ? 'bg-gray-900 text-gray-100' : 'bg-gray-50 text-gray-800'}`}>
@@ -1215,73 +1274,117 @@ const App = () => {
             </div>
 
             {isScanning ? (
-              <div className="flex flex-col items-center justify-center p-16 text-center text-gray-500 dark:text-gray-400">
-                <div className="animate-spin mb-4 text-blue-500">
-                  <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 2.75C6.89137 2.75 2.75 6.89137 2.75 12C2.75 17.1086 6.89137 21.25 12 21.25C17.1086 21.25 21.25 17.1086 21.25 12C21.25 10.1611 20.768 8.40699 19.9288 6.85871" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </div>
-                <h2 className={`text-2xl font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                  Scanning files...
-                </h2>
-                <p>Please wait, this may take a moment for large folders.</p>
-              </div>
-            ) : (
-              
-              <div
-                className={`w-full max-w-3xl border-2 border-dashed rounded-[2rem] p-16 text-center transition-all duration-300 ${isDragging ? 'border-blue-500 bg-blue-500/10' : (darkMode ? 'border-gray-700 bg-gray-800/30' : 'border-gray-300 bg-white/50')} backdrop-blur-sm`}
-                onDragEnter={handleDragEnter}
-                onDragLeave={handleDragLeave}
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-              >
-                {appMode === 'weave' ? (
-                  // --- UI РЕЖИМА УПАКОВКИ ---
-                  <div className="animate-in fade-in zoom-in-95 duration-300">
-                    <svg className="w-16 h-16 mx-auto mb-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-                    </svg>
-                    <h2 className={`text-3xl font-bold tracking-tight mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Drop your project here</h2>
-                    <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} mt-2`}>Drag and drop folders or files to begin weaving.</p>
-                    
-                    <div className="mt-8 flex justify-center items-center space-x-4">
-                      <button
-                        onClick={() => folderInputRef.current?.click()}
-                        className={`font-semibold py-3 px-6 rounded-2xl shadow-sm transition-all duration-200 active:scale-95 ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-white hover:bg-gray-50 text-gray-800'}`}
-                      >
-                        Select Folder
-                      </button>
-                      <button
-                        onClick={() => fileInputRef.current?.click()}
-                        className={`font-semibold py-3 px-6 rounded-2xl shadow-sm transition-all duration-200 active:scale-95 ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-white hover:bg-gray-50 text-gray-800'}`}
-                      >
-                        Select Files
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  // --- UI РЕЖИМА РАСПАКОВКИ ---
-                  <div className="animate-in fade-in zoom-in-95 duration-300">
-                    <div className={`w-20 h-20 mx-auto mb-6 rounded-3xl flex items-center justify-center ${darkMode ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
-                      <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m3.75 9v6m3-3H9m1.5-12H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                      </svg>
-                    </div>
-                    <h2 className={`text-3xl font-bold tracking-tight mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Unpack your Woven Project</h2>
-                    <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} mt-2 text-base max-w-md mx-auto`}>Drop your <span className="font-mono text-sm bg-gray-500/10 px-1 rounded">.txt (or other)</span> file generated by Nexus Weaver to restore it back into a directory structure.</p>
-                    
-                    <div className="mt-8 flex justify-center items-center">
-                      <button
-                        onClick={() => unweaveFileInputRef.current?.click()}
-                        className={`font-semibold py-3 px-8 rounded-2xl shadow-lg transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 bg-blue-600 hover:bg-blue-500 text-white`}
-                      >
-                        Select Woven File
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+			  <div className="flex flex-col items-center justify-center p-10 text-center text-gray-500 dark:text-gray-400">
+				<div className="animate-spin mb-4 text-blue-500">
+				  <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<path d="M12 2.75C6.89137 2.75 2.75 6.89137 2.75 12C2.75 17.1086 6.89137 21.25 12 21.25C17.1086 21.25 21.25 17.1086 21.25 12C21.25 10.1611 20.768 8.40699 19.9288 6.85871" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+				  </svg>
+				</div>
+				<h2 className={`text-2xl font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+				  Scanning files...
+				</h2>
+				<p>Please wait, this may take a moment for large folders.</p>
+			  </div>
+			) : (
+			  <div
+				className={`w-full max-w-3xl border-2 border-dashed rounded-[2rem] p-10 text-center transition-all duration-300 ${isDragging ? 'border-blue-500 bg-blue-500/10' : (darkMode ? 'border-gray-700 bg-gray-800/30' : 'border-gray-300 bg-white/50')} backdrop-blur-sm`}
+				onDragEnter={handleDragEnter}
+				onDragLeave={handleDragLeave}
+				onDragOver={handleDragOver}
+				onDrop={handleDrop}
+			  >
+				{appMode === 'weave' ? (
+				  // --- РЕЖИМ УПАКОВКИ ---
+				  <div className="animate-in fade-in zoom-in-95 duration-300 flex flex-col items-center">
+					<svg className="w-16 h-16 mx-auto mb-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+					</svg>
+					<h2 className={`text-3xl font-bold tracking-tight mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Drop your project here</h2>
+					<p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} mt-2`}>Drag and drop folders or files to begin weaving.</p>
+					
+					<div className="mt-8 flex justify-center items-center space-x-4">
+					  <button
+						onClick={() => folderInputRef.current?.click()}
+						className={`font-semibold py-3 px-6 rounded-2xl shadow-sm transition-all duration-200 active:scale-95 ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-white hover:bg-gray-50 text-gray-800'}`}
+					  >
+						Select Folder
+					  </button>
+					  <button
+						onClick={() => fileInputRef.current?.click()}
+						className={`font-semibold py-3 px-6 rounded-2xl shadow-sm transition-all duration-200 active:scale-95 ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-white hover:bg-gray-50 text-gray-800'}`}
+					  >
+						Select Files
+					  </button>
+					</div>
+					
+					{/* GitHub Import */}
+					<div className="mt-4 flex justify-center w-full">
+					  {!showGithubInput ? (
+						<button
+						  onClick={() => setShowGithubInput(true)}
+						  className={`flex items-center space-x-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ${darkMode ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'}`}
+						>
+						  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
+							<path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+						  </svg>
+						  <span>Import from GitHub</span>
+						</button>
+					  ) : (
+						<div className={`flex items-center w-full max-w-md p-1 rounded-xl border transition-all duration-300 shadow-sm focus-within:ring-2 focus-within:ring-blue-500/50 animate-in fade-in zoom-in-95 ${darkMode ? 'bg-gray-800/80 border-gray-700' : 'bg-white border-gray-200'}`}>
+						  <div className={`pl-3 flex-shrink-0 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+							<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
+							  <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+							</svg>
+						  </div>
+						  <input 
+							type="text" 
+							placeholder="https://github.com/owner/repo" 
+							value={githubUrl}
+							onChange={(e) => setGithubUrl(e.target.value)}
+							autoFocus
+							className={`w-full py-2 px-3 text-sm outline-none bg-transparent ${darkMode ? 'text-white placeholder-gray-500' : 'text-gray-900 placeholder-gray-400'}`}
+						  />
+						  <button 
+							onClick={handleGithubImport}
+							disabled={isGithubLoading || !githubUrl}
+							className={`px-3 py-1.5 ml-1 rounded-lg text-sm font-medium transition-colors ${darkMode ? 'hover:bg-gray-700 text-blue-400' : 'hover:bg-gray-100 text-blue-600'} ${isGithubLoading || !githubUrl ? 'opacity-50 cursor-not-allowed' : ''}`}
+						  >
+							{isGithubLoading ? '...' : 'Import'}
+						  </button>
+						  <button 
+							onClick={() => { setShowGithubInput(false); setGithubUrl(""); }}
+							className={`px-2.5 py-1.5 ml-1 rounded-lg text-sm transition-colors ${darkMode ? 'text-gray-400 hover:text-white hover:bg-gray-700' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'}`}
+							title="Cancel"
+						  >
+							✕
+						  </button>
+						</div>
+					  )}
+					</div>
+				  </div>
+				) : (
+				  // --- РЕЖИМ РАСПАКОВКИ ---
+				  <div className="animate-in fade-in zoom-in-95 duration-300">
+					<div className={`w-20 h-20 mx-auto mb-6 rounded-3xl flex items-center justify-center ${darkMode ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
+					  <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m3.75 9v6m3-3H9m1.5-12H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+					  </svg>
+					</div>
+					<h2 className={`text-3xl font-bold tracking-tight mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Unpack your Woven Project</h2>
+					<p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} mt-2 text-base max-w-md mx-auto`}>Drop your <span className="font-mono text-sm bg-gray-500/10 px-1 rounded">.txt (or other)</span> file generated by Nexus Weaver to restore it back into a directory structure.</p>
+					
+					<div className="mt-8 flex justify-center items-center">
+					  <button
+						onClick={() => unweaveFileInputRef.current?.click()}
+						className={`font-semibold py-3 px-8 rounded-2xl shadow-lg transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 bg-blue-600 hover:bg-blue-500 text-white`}
+					  >
+						Select Woven File
+					  </button>
+					</div>
+				  </div>
+				)}
+			  </div>
+			)}
           </div> 
         )}
 
